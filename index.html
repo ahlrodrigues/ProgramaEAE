@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Programa de Aulas EAE</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script
+      src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"
+      defer
+    ></script>
+    <script src="./app.js" defer></script>
+    <script src="./default-program-data.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="hero-panel" id="hero-panel">
+        <span class="eyebrow">Plataforma acadêmica</span>
+        <h1>Programas de aulas com edição flexível por turma.</h1>
+        <p class="hero-copy">
+          Cadastre turmas, comece com uma tabela padronizada, personalize o
+          conteúdo e substitua tudo por uma planilha importada quando fizer mais
+          sentido para a escola.
+        </p>
+
+        <div class="hero-card">
+          <h2>Escopo inicial</h2>
+          <ul>
+            <li>Login e acesso inicial</li>
+            <li>Cadastro de turmas e responsáveis</li>
+            <li>Tabela padrão editável</li>
+            <li>Importação de Excel ou CSV</li>
+          </ul>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">MVP navegável</span>
+            <h2>Painel de Programas</h2>
+          </div>
+          <div class="topbar-actions">
+            <div class="session-chip" id="session-chip">Visitante</div>
+            <button id="logout-button" type="button" class="ghost-action">Sair</button>
+          </div>
+        </header>
+
+        <nav class="tabs" aria-label="Seções principais">
+          <button class="tab is-active" data-tab-target="login">Login</button>
+          <button class="tab" data-tab-target="cadastro">Cadastro</button>
+          <button class="tab" data-tab-target="turmas">Turmas</button>
+          <button class="tab" data-tab-target="programa-cb" data-tab-panel-target="programa">
+            Programa CB
+          </button>
+          <button class="tab" data-tab-target="programa-eae" data-tab-panel-target="programa">
+            Programa EAE
+          </button>
+          <button class="tab" data-tab-target="programa-le" data-tab-panel-target="programa">
+            Programa LE
+          </button>
+        </nav>
+
+        <section class="panel is-active" data-tab-panel="login">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow">Acesso</span>
+              <h3>Tela de login</h3>
+            </div>
+            <p>Fluxo inicial para prototipar autenticação e perfis.</p>
+          </div>
+
+          <form id="login-form" class="card-grid">
+            <label>
+              <span>E-mail</span>
+              <input type="email" name="email" placeholder="coordenacao@escola.org" required />
+            </label>
+            <label>
+              <span>Senha</span>
+              <input type="password" name="password" placeholder="Digite sua senha" required />
+            </label>
+            <button type="submit" class="primary-action">Entrar</button>
+          </form>
+
+          <div class="saved-summary access-summary">
+            <h4>Acessos fixos</h4>
+            <div class="access-grid">
+              <div class="access-item">
+                <strong>Admin</strong>
+                <span>E-mail: <code>admin@eae.local</code></span>
+                <span>Senha: <code>123456</code></span>
+              </div>
+              <div class="access-item">
+                <strong>Dirigente</strong>
+                <span>E-mail: <code>dirigente@eae.local</code></span>
+                <span>Senha: <code>123456</code></span>
+              </div>
+            </div>
+          </div>
+
+          <form id="register-form" class="card-grid">
+            <div class="inline-title">
+              <h4>Criar conta</h4>
+              <p>Cadastro inicial para coordenadores, gestores ou secretaria.</p>
+            </div>
+            <label>
+              <span>Nome</span>
+              <input type="text" name="name" placeholder="Nome do responsável" required />
+            </label>
+            <label>
+              <span>E-mail</span>
+              <input type="email" name="email" placeholder="gestao@escola.org" required />
+            </label>
+            <label>
+              <span>Senha</span>
+              <input type="password" name="password" placeholder="Mínimo de 6 caracteres" required />
+            </label>
+            <label>
+              <span>Perfil</span>
+              <select name="role">
+                <option value="Admin">Admin</option>
+                <option value="Dirigente" selected>Dirigente</option>
+              </select>
+            </label>
+            <button type="submit" class="primary-action">Criar conta</button>
+          </form>
+
+          <div class="saved-summary" id="auth-notice">
+            Entre ou crie uma conta para começar.
+          </div>
+        </section>
+
+        <section class="panel" data-tab-panel="cadastro">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow">Coordenação</span>
+              <h3>Cadastro do dirigente</h3>
+            </div>
+            <p>Registre os responsáveis da turma e os canais de contato da coordenação.</p>
+          </div>
+
+          <form id="contacts-form" class="card-grid two-columns">
+            <label>
+              <span>Nome do(a) dirigente</span>
+              <input type="text" name="dirigenteNome" placeholder="Nome do(a) dirigente" />
+            </label>
+            <label>
+              <span>Telefone</span>
+              <input type="text" name="telefone" placeholder="(00) 0000-0000" />
+            </label>
+            <label>
+              <span>Mensageiro</span>
+              <input type="text" name="whatsapp" placeholder="(00) 00000-0000" />
+            </label>
+            <label>
+              <span>E-mail</span>
+              <input type="email" name="email" placeholder="secretaria@escola.org" />
+            </label>
+            <div class="inline-actions form-inline-actions">
+              <button id="edit-contacts-button" type="button" class="ghost-action">Editar</button>
+              <button type="submit" class="primary-action">Salvar cadastro</button>
+            </div>
+          </form>
+
+          <div class="saved-summary" id="contacts-summary">
+            Selecione uma turma para cadastrar dirigente, secretários e contatos.
+          </div>
+
+          <section id="admin-users-section" class="saved-summary admin-users-section" hidden>
+            <div class="section-head section-head-compact">
+              <div>
+                <span class="eyebrow">Admin</span>
+                <h4>Gestão de usuários</h4>
+              </div>
+              <p>Atualize o perfil de acesso dos usuários cadastrados.</p>
+            </div>
+            <div id="admin-users-list" class="admin-users-list"></div>
+          </section>
+        </section>
+
+        <section class="panel" data-tab-panel="turmas">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow">Turmas</span>
+              <h3>Cadastro da turma</h3>
+            </div>
+            <div class="section-actions">
+              <p>Esses dados alimentam o contexto do programa e a organização da escola.</p>
+              <div class="section-actions-buttons">
+                <button id="new-turma-button" type="button" class="ghost-action">Nova turma</button>
+              </div>
+            </div>
+          </div>
+          <p class="list-hint">Clique na turma para editar.</p>
+          <div class="saved-summary turma-list" id="turma-list">
+            <p class="list-empty">As turmas cadastradas aparecerão aqui.</p>
+          </div>
+          <form id="turma-form" class="card-grid two-columns stack-card" hidden>
+            <input id="owner-user-id" type="hidden" name="ownerUserId" />
+            <input
+              id="copy-program-from-turma-id"
+              type="hidden"
+              name="copyProgramFromTurmaId"
+              value=""
+            />
+            <div class="form-card-head">
+              <h4>Cadastro da turma</h4>
+              <div class="form-card-actions">
+                <button id="edit-turma-button" type="button" class="ghost-action">Editar</button>
+                <button id="save-turma-button" type="submit" class="primary-action">Salvar cadastro</button>
+              </div>
+            </div>
+            <label>
+              <span>Número da turma</span>
+              <input type="text" name="nome" placeholder="1º" required />
+            </label>
+            <label>
+              <span>Modalidade</span>
+              <select name="modalidade" required>
+                <option value="presencial">Presencial</option>
+                <option value="online">On-line</option>
+                <option value="ead">À distância</option>
+              </select>
+            </label>
+            <label>
+              <span>Tipo</span>
+              <select name="tipo" required>
+                <option value="CB">Curso Básico de Espirititsmo</option>
+                <option value="EAE">Escola de Aprendizes do Evangelho</option>
+                <option value="LE">Estudo de O Livro dos Espíritos</option>
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select name="status" required>
+                <option value="ativo">Ativo</option>
+                <option value="rascunho">Rascunho</option>
+                <option value="arquivado">Arquivado</option>
+              </select>
+            </label>
+            <div class="card-grid three-columns schedule-fields-row">
+              <label>
+                <span>Data de início das aulas</span>
+                <input type="date" name="inicio" />
+              </label>
+              <label>
+                <span>Dia da semana</span>
+                <input
+                  id="turma-weekday"
+                  type="text"
+                  name="diaSemana"
+                  placeholder="Preenchido automaticamente"
+                  readonly
+                />
+              </label>
+              <label>
+                <span>Horário de início das aulas</span>
+                <input type="time" name="horarioInicio" step="60" lang="pt-BR" title="Selecione o horário em formato 24 horas (HH:MM)" />
+              </label>
+            </div>
+            <div class="secretaries-field">
+              <div class="secretaries-head">
+                <div class="secretaries-title-row">
+                  <span>Secretário(a)(s)</span>
+                  <button id="add-turma-secretary-button" type="button" class="ghost-action add-secretary-button">+</button>
+                </div>
+              </div>
+              <p class="field-support-copy">Cadastre nome, mensageiro e e-mail de cada secretário(a).</p>
+              <div id="turma-secretaries-list" class="secretaries-list"></div>
+            </div>
+          </form>
+
+          <section class="saved-summary students-panel" id="students-panel" hidden>
+            <div class="students-panel-head">
+              <div class="inline-title">
+                <h4>Alunos da turma</h4>
+                <p id="students-import-feedback">Nenhum aluno importado ainda.</p>
+              </div>
+              <label class="file-import-field students-import-field">
+                <span>Importar alunos por Excel</span>
+                <input
+                  id="students-file-input"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                />
+                <small>Use colunas com nome, email e Mensageiro.</small>
+              </label>
+              <button
+                id="students-template-button"
+                type="button"
+                class="ghost-action students-template-button"
+              >
+                Modelo da planilha
+              </button>
+            </div>
+            <div class="students-table-wrapper">
+              <table class="students-table">
+                <thead>
+                  <tr>
+                    <th>Nome</th>
+                    <th>E-mail</th>
+                    <th>Mensageiro</th>
+                  </tr>
+                </thead>
+                <tbody id="students-table-body">
+                  <tr>
+                    <td colspan="3">Nenhum aluno importado ainda.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="saved-summary" id="turma-summary" hidden>
+            Nenhuma turma cadastrada ainda.
+          </div>
+
+          <div class="inline-actions stack-card" id="turma-actions" hidden>
+            <button id="archive-turma-button" type="button" class="ghost-action">Arquivar turma</button>
+            <button id="restore-turma-button" type="button" class="ghost-action" hidden>
+              Restaurar turma
+            </button>
+            <button id="delete-turma-button" type="button" class="danger-action" hidden>
+              Excluir turma
+            </button>
+          </div>
+        </section>
+
+        <section class="panel" data-tab-panel="programa">
+          <div class="section-head section-head-wide">
+            <p>
+              A tabela padrão pode ser editada livremente, expandida com novas
+              linhas ou colunas. As datas das aulas são preenchidas automaticamente, acrescente linhas para as datas correspondentes a férias, feriados e recessos.
+            </p>
+          </div>
+
+          <div class="program-meta card-grid three-columns">
+            <label>
+              <span>Título do programa</span>
+              <input id="program-title" type="text" placeholder="Programa anual da turma" />
+            </label>
+            <label class="program-date-field">
+              <span>Data inicial</span>
+              <input id="program-start-date" type="text" inputmode="numeric" placeholder="DD/MM/AAAA" />
+            </label>
+            <label class="program-date-field">
+              <span>Data final</span>
+              <input id="program-end-date" type="text" inputmode="numeric" placeholder="DD/MM/AAAA" />
+            </label>
+            <div class="toolbar program-meta-toolbar">
+              <button id="edit-program" type="button">Editar</button>
+              <button id="save-program" type="button" class="primary-action">Salvar</button>
+              <details id="export-menu" class="export-menu">
+                <summary>Exportar</summary>
+                <div class="export-menu-list">
+                  <button id="export-excel" type="button">Excel</button>
+                  <button id="export-pdf" type="button">PDF</button>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table id="program-table"></table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="students-template-dialog" class="app-dialog">
+      <form method="dialog" class="app-dialog-card">
+        <div class="app-dialog-head">
+          <div>
+            <span class="eyebrow">Importação</span>
+            <h3>Modelo da planilha de alunos</h3>
+          </div>
+          <button type="submit" class="ghost-action">Fechar</button>
+        </div>
+        <p>
+          Use a primeira aba da planilha e prefira estas três colunas:
+          <strong>nome</strong>, <strong>email</strong> e <strong>whatsapp</strong>.
+        </p>
+        <ul class="app-dialog-list">
+          <li>A coluna <strong>nome</strong> é obrigatória.</li>
+          <li>Linhas totalmente vazias são ignoradas.</li>
+          <li>Linhas com e-mail ou mensageiro, mas sem nome, geram aviso.</li>
+          <li>Se houver cabeçalho, ele pode usar variações como "Nome do aluno" e "Telefone".</li>
+        </ul>
+        <div class="inline-actions">
+          <button id="download-students-template-button" type="button" class="primary-action">
+            Baixar modelo CSV
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>
