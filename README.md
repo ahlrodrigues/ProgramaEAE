@@ -24,6 +24,14 @@ Plataforma inicial para gestão de turmas escolares e seus programas de aulas.
 - Exportação do programa para PDF via impressão do navegador
 - Persistência local em SQLite
 
+## Em andamento (não finalizado)
+
+- Separação da área de `Aprovações` em dois fluxos:
+  - `Cadastros sem vínculo`
+  - `Vínculos com turma`
+- Exibição e decisão de solicitações de vínculo diretamente no card da turma correspondente, na aba `Turmas`.
+- Ajustes de UX e validação desse fluxo ainda pendentes (layout final, consistência visual e testes completos de ponta a ponta).
+
 ## Como executar
 
 1. No diretório do projeto, rode:

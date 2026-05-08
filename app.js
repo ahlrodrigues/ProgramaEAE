@@ -10,6 +10,7 @@ const state = {
   activeTurmasForCopy: [],
   currentTurmaId: null,
   currentScope: "active",
+  currentApprovalsView: "cadastros",
   currentProgramTab: "programa-cb",
   isCreatingTurma: false,
   isTurmaDetailsOpen: false,
@@ -24,6 +25,9 @@ const state = {
 const tabs = Array.from(document.querySelectorAll(".tab"));
 const panels = Array.from(document.querySelectorAll(".panel"));
 const sessionChip = document.querySelector("#session-chip");
+const userMenu = document.querySelector("#user-menu");
+const userMenuPanel = document.querySelector("#user-menu-panel");
+const openCadastroButton = document.querySelector("#open-cadastro-button");
 const loginForm = document.querySelector("#login-form");
 const registerForm = document.querySelector("#register-form");
 const contactsForm = document.querySelector("#contacts-form");
@@ -35,6 +39,8 @@ const accessHistoryList = document.querySelector("#access-history-list");
 const accessHistorySection = document.querySelector("#access-history-section");
 const linkRequestsSection = document.querySelector("#link-requests-section");
 const linkRequestsList = document.querySelector("#link-requests-list");
+const approvalsSubtabs = document.querySelector("#approvals-subtabs");
+const approvalViewButtons = Array.from(document.querySelectorAll("[data-approvals-view]"));
 const approvalsPanelTitle = document.querySelector("#approvals-panel-title");
 const approvalsPanelDescription = document.querySelector("#approvals-panel-description");
 const adminUsersEyebrow = document.querySelector("#admin-users-eyebrow");
@@ -280,6 +286,26 @@ async function refreshSessionProfile() {
 }
 
 function setupForms() {
+  sessionChip?.addEventListener("click", () => {
+    if (!state.session || !userMenuPanel) return;
+    const isOpen = !userMenuPanel.hidden;
+    userMenuPanel.hidden = isOpen;
+    sessionChip.setAttribute("aria-expanded", String(!isOpen));
+  });
+
+  openCadastroButton?.addEventListener("click", () => {
+    if (userMenuPanel) userMenuPanel.hidden = true;
+    sessionChip?.setAttribute("aria-expanded", "false");
+    activateTab("cadastro");
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!userMenu || !userMenuPanel || userMenuPanel.hidden) return;
+    if (userMenu.contains(event.target)) return;
+    userMenuPanel.hidden = true;
+    sessionChip?.setAttribute("aria-expanded", "false");
+  });
+
   logoutButton.addEventListener("click", async () => {
     try {
       await apiRequest("/api/auth/logout", { method: "POST" });
@@ -288,6 +314,8 @@ function setupForms() {
     }
 
     window.localStorage.removeItem(TOKEN_KEY);
+    if (userMenuPanel) userMenuPanel.hidden = true;
+    sessionChip?.setAttribute("aria-expanded", "false");
     renderLoggedOutState("Sessão encerrada.");
     activateTab("login");
   });
@@ -623,19 +651,44 @@ function setupForms() {
     const approveButton = event.target.closest("[data-link-request-approve]");
     const rejectButton = event.target.closest("[data-link-request-reject]");
     if (!approveButton && !rejectButton) return;
-
-    const requestId = approveButton?.dataset.linkRequestApprove || rejectButton?.dataset.linkRequestReject;
-    const action = approveButton ? "approve" : "reject";
-    try {
-      await apiRequest(`/api/turma-link-requests/${requestId}/${action}`, { method: "POST" });
-      showToast("success", action === "approve" ? "Solicitação aprovada" : "Solicitação rejeitada",
-        action === "approve" ? "O secretário já pode acessar a turma." : "Solicitação de vínculo rejeitada.");
-      await loadReferenceData();
-      renderLinkRequestsForDirigente();
-    } catch (error) {
-      showToast("error", "Erro ao decidir solicitação", error.message);
-    }
+    await handleTurmaLinkRequestDecision(approveButton, rejectButton);
   });
+
+  turmaList?.addEventListener("click", async (event) => {
+    const approveButton = event.target.closest("[data-turma-link-approve]");
+    const rejectButton = event.target.closest("[data-turma-link-reject]");
+    if (!approveButton && !rejectButton) return;
+    event.stopPropagation();
+    await handleTurmaLinkRequestDecision(approveButton, rejectButton);
+  });
+
+  approvalsSubtabs?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-approvals-view]");
+    if (!button) return;
+    state.currentApprovalsView = button.dataset.approvalsView || "cadastros";
+    renderApprovalsView();
+  });
+}
+
+async function handleTurmaLinkRequestDecision(approveButton, rejectButton) {
+  const requestId = approveButton?.dataset.linkRequestApprove
+    || approveButton?.dataset.turmaLinkApprove
+    || rejectButton?.dataset.linkRequestReject
+    || rejectButton?.dataset.turmaLinkReject;
+  const action = Boolean(approveButton) ? "approve" : "reject";
+  try {
+    await apiRequest(`/api/turma-link-requests/${requestId}/${action}`, { method: "POST" });
+    showToast(
+      "success",
+      action === "approve" ? "Solicitação aprovada" : "Solicitação rejeitada",
+      action === "approve" ? "O secretário já pode acessar a turma." : "Solicitação de vínculo rejeitada."
+    );
+    await loadReferenceData();
+    renderLinkRequestsForDirigente();
+    renderTurmaList();
+  } catch (error) {
+    showToast("error", "Erro ao decidir solicitação", error.message);
+  }
 }
 
 function setupProgramActions() {
@@ -720,6 +773,7 @@ async function loadReferenceData() {
     renderAdminUserManagement();
     renderAccessHistory();
     renderLinkRequestsForDirigente();
+    renderApprovalsView();
     renderCopyProgramField();
     return;
   }
@@ -735,10 +789,12 @@ async function loadReferenceData() {
       renderAdminUserManagement();
       renderAccessHistory();
       renderLinkRequestsForDirigente();
+      renderApprovalsView();
       return;
     }
     renderAdminUserManagement();
     renderAccessHistory();
+    renderApprovalsView();
     await loadCopySourceTurmas();
     return;
   }
@@ -756,6 +812,7 @@ async function loadReferenceData() {
   renderAdminUserManagement();
   renderAccessHistory();
   renderLinkRequestsForDirigente();
+  renderApprovalsView();
 }
 
 async function loadCopySourceTurmas() {
@@ -859,6 +916,9 @@ function renderTurmaList() {
   }
 
   state.turmas.forEach((turma) => {
+    const card = document.createElement("div");
+    card.className = "turma-card";
+
     const button = document.createElement("button");
     button.type = "button";
     button.className = "turma-item";
@@ -879,7 +939,48 @@ function renderTurmaList() {
     meta.textContent = buildTurmaCardSummary(turma);
     button.appendChild(meta);
 
-    turmaList.appendChild(button);
+    card.appendChild(button);
+
+    const pendingRequests = (state.linkRequests || []).filter((request) => (
+      Number(request.turmaId) === Number(turma.id) && request.status === "pending"
+    ));
+    if (canManageUserApprovals() && pendingRequests.length) {
+      const requestsBlock = document.createElement("div");
+      requestsBlock.className = "turma-link-requests";
+
+      const title = document.createElement("strong");
+      title.textContent = "Solicitações de vínculo pendentes desta turma";
+      requestsBlock.appendChild(title);
+
+      pendingRequests.forEach((request) => {
+        const row = document.createElement("div");
+        row.className = "turma-link-request-row";
+
+        const info = document.createElement("span");
+        info.textContent = `${request.requesterName} (${request.requesterEmail})`;
+
+        const approveButton = document.createElement("button");
+        approveButton.type = "button";
+        approveButton.className = "ghost-action";
+        approveButton.dataset.turmaLinkApprove = String(request.id);
+        approveButton.textContent = "Aprovar";
+
+        const rejectButton = document.createElement("button");
+        rejectButton.type = "button";
+        rejectButton.className = "ghost-action";
+        rejectButton.dataset.turmaLinkReject = String(request.id);
+        rejectButton.textContent = "Rejeitar";
+
+        row.appendChild(info);
+        row.appendChild(approveButton);
+        row.appendChild(rejectButton);
+        requestsBlock.appendChild(row);
+      });
+
+      card.appendChild(requestsBlock);
+    }
+
+    turmaList.appendChild(card);
   });
 }
 
@@ -1197,14 +1298,20 @@ function renderAccessHistory() {
     return;
   }
 
-  if (!state.accessEvents.length) {
+  const historyEvents = state.accessEvents.filter((event) => (
+    !(event.type === "profile_request"
+      && normalizeSecretaryRole(event.requestedRole) === "Secretário"
+      && event.status === "pending")
+  ));
+
+  if (!historyEvents.length) {
     const emptyState = document.createElement("p");
     emptyState.textContent = "Nenhuma aprovação ou convite registrado ainda.";
     accessHistoryList.appendChild(emptyState);
     return;
   }
 
-  state.accessEvents.forEach((event) => {
+  historyEvents.forEach((event) => {
     const item = document.createElement("div");
     item.className = "admin-user-item access-history-item";
 
@@ -1248,7 +1355,7 @@ function renderLinkRequestsForDirigente() {
     return;
   }
 
-  const visible = canManageUserApprovals();
+  const visible = canManageUserApprovals() && state.currentApprovalsView === "vinculos";
   linkRequestsSection.hidden = !visible;
   linkRequestsList.replaceChildren();
   if (!visible) {
@@ -1263,36 +1370,78 @@ function renderLinkRequestsForDirigente() {
     return;
   }
 
-  state.linkRequests.forEach((request) => {
-    const item = document.createElement("div");
-    item.className = "admin-user-item";
+  const requestsByTurma = state.linkRequests.reduce((acc, request) => {
+    const key = String(request.turmaId || "sem-turma");
+    if (!acc[key]) {
+      acc[key] = {
+        turmaName: request.turmaName || "Turma",
+        turmaTipo: request.turmaTipo || "Sem tipo",
+        items: [],
+      };
+    }
+    acc[key].items.push(request);
+    return acc;
+  }, {});
 
-    const meta = document.createElement("div");
-    meta.className = "admin-user-meta";
-    const title = document.createElement("strong");
-    title.textContent = `${request.requesterName} solicitou vínculo na turma ${request.turmaName}`;
-    const details = document.createElement("span");
-    details.textContent = `${request.requesterEmail} - ${request.turmaTipo || "Sem tipo"} - ${formatDateTime(request.createdAt)}`;
-    meta.appendChild(title);
-    meta.appendChild(details);
+  Object.values(requestsByTurma).forEach((group) => {
+    const turmaBlock = document.createElement("section");
+    turmaBlock.className = "saved-summary";
 
-    const approveButton = document.createElement("button");
-    approveButton.type = "button";
-    approveButton.className = "ghost-action";
-    approveButton.dataset.linkRequestApprove = String(request.id);
-    approveButton.textContent = "Aprovar vínculo";
+    const turmaTitle = document.createElement("h4");
+    turmaTitle.textContent = `${group.turmaName} · ${group.turmaTipo}`;
+    turmaBlock.appendChild(turmaTitle);
 
-    const rejectButton = document.createElement("button");
-    rejectButton.type = "button";
-    rejectButton.className = "ghost-action";
-    rejectButton.dataset.linkRequestReject = String(request.id);
-    rejectButton.textContent = "Rejeitar";
+    group.items.forEach((request) => {
+      const item = document.createElement("div");
+      item.className = "admin-user-item";
 
-    item.appendChild(meta);
-    item.appendChild(approveButton);
-    item.appendChild(rejectButton);
-    linkRequestsList.appendChild(item);
+      const meta = document.createElement("div");
+      meta.className = "admin-user-meta";
+      const title = document.createElement("strong");
+      title.textContent = `${request.requesterName} solicitou vínculo`;
+      const details = document.createElement("span");
+      details.textContent = `${request.requesterEmail} - ${formatDateTime(request.createdAt)}`;
+      meta.appendChild(title);
+      meta.appendChild(details);
+
+      const approveButton = document.createElement("button");
+      approveButton.type = "button";
+      approveButton.className = "ghost-action";
+      approveButton.dataset.linkRequestApprove = String(request.id);
+      approveButton.textContent = "Aprovar vínculo";
+
+      const rejectButton = document.createElement("button");
+      rejectButton.type = "button";
+      rejectButton.className = "ghost-action";
+      rejectButton.dataset.linkRequestReject = String(request.id);
+      rejectButton.textContent = "Rejeitar";
+
+      item.appendChild(meta);
+      item.appendChild(approveButton);
+      item.appendChild(rejectButton);
+      turmaBlock.appendChild(item);
+    });
+
+    linkRequestsList.appendChild(turmaBlock);
   });
+}
+
+function renderApprovalsView() {
+  const isCadastros = state.currentApprovalsView === "cadastros";
+  approvalViewButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.approvalsView === state.currentApprovalsView);
+  });
+
+  if (adminUsersSection) {
+    const canManage = canManageUserApprovals();
+    const canInvite = canInviteSecretaries();
+    adminUsersSection.hidden = !(canManage || canInvite) || !isCadastros;
+  }
+  if (accessHistorySection) {
+    const isSecretary = state.session?.role === "Secretário" && hasAppAccess();
+    accessHistorySection.hidden = !isCadastros || isSecretary || !canManageUserApprovals();
+  }
+  renderLinkRequestsForDirigente();
 }
 
 function formatAccessEventStatus(status) {
@@ -2337,9 +2486,14 @@ function renderSession() {
     ? `${state.session.name} · ${formatUserAccessLabel(state.session)}`
     : "Visitante";
   document.body.classList.toggle("is-authenticated", Boolean(state.session));
+  if (userMenuPanel) {
+    userMenuPanel.hidden = true;
+  }
+  sessionChip.setAttribute("aria-expanded", "false");
   updateAccessControlledTabs();
   renderApprovalsPanelCopy();
   renderAdminUserManagement();
+  renderApprovalsView();
   renderLinkRequestsForDirigente();
 }
 
@@ -2395,6 +2549,7 @@ function renderApprovalsPanelCopy() {
   if (accessHistorySection) {
     accessHistorySection.hidden = isSecretary || !canManage;
   }
+  renderApprovalsView();
 }
 
 function hasAppAccess() {
@@ -2455,6 +2610,9 @@ function updateAccessControlledTabs() {
   const selectedTurmaProgramType = getCurrentTurmaProgramType();
 
   tabs.forEach((tab) => {
+    const target = tab.dataset.tabTarget;
+    const isAuthTab = target === "login" || target === "cadastro";
+    tab.hidden = Boolean(state.session) && isAuthTab;
     const requiresLogin = tab.dataset.tabTarget !== "login";
     const requiresApprovalAccess = tab.dataset.tabTarget === "aprovacoes";
     const programType = getProgramTypeForTab(tab);

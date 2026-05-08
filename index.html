@@ -47,15 +47,19 @@
             <h2>Painel de Programas</h2>
           </div>
           <div class="topbar-actions">
-            <div class="session-chip" id="session-chip">Visitante</div>
-            <button id="logout-button" type="button" class="ghost-action">Sair</button>
+            <div class="user-menu" id="user-menu">
+              <button class="session-chip" id="session-chip" type="button" aria-haspopup="true" aria-expanded="false">Visitante</button>
+              <div class="user-menu-panel" id="user-menu-panel" hidden>
+                <button id="open-cadastro-button" type="button" class="ghost-action">Cadastro</button>
+                <button id="logout-button" type="button" class="ghost-action">Sair</button>
+              </div>
+            </div>
           </div>
         </header>
 
         <nav class="tabs" aria-label="Seções principais">
           <button class="tab is-active" data-tab-target="login">Login</button>
           <button class="tab" data-tab-target="cadastro">Cadastro</button>
-          <button class="tab" data-tab-target="aprovacoes">Aprovações</button>
           <button class="tab" data-tab-target="turmas">Turmas</button>
           <button class="tab" data-tab-target="programa-cb" data-tab-panel-target="programa">
             Programa CB
@@ -66,6 +70,7 @@
           <button class="tab" data-tab-target="programa-le" data-tab-panel-target="programa">
             Programa LE
           </button>
+          <button class="tab" data-tab-target="aprovacoes">Aprovações</button>
         </nav>
 
         <section class="panel is-active" data-tab-panel="login">
@@ -200,6 +205,10 @@
               <h3 id="approvals-panel-title">Aprovações e convites</h3>
             </div>
             <p id="approvals-panel-description">Solicitações de perfil e convites de turma visíveis para dirigentes aprovados.</p>
+          </div>
+          <div class="approvals-subtabs" id="approvals-subtabs">
+            <button type="button" class="ghost-action is-active" data-approvals-view="cadastros">Cadastros sem vínculo</button>
+            <button type="button" class="ghost-action" data-approvals-view="vinculos">Vínculos com turma</button>
           </div>
 
           <section id="admin-users-section" class="saved-summary admin-users-section">

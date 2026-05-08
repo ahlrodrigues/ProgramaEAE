@@ -240,7 +240,7 @@ const listReceivedTurmaLinkRequestsStmt = db.prepare(`
   JOIN users AS requester ON requester.id = turma_link_requests.requester_user_id
   WHERE turma_link_requests.status = 'pending'
     AND turmas.archived_at IS NULL
-    AND (turmas.user_id = ?)
+    AND turma_link_requests.dirigente_user_id = ?
   ORDER BY turma_link_requests.created_at DESC
 `);
 
@@ -688,7 +688,7 @@ async function handleApi(request, response, url) {
     }
 
     const turma = getTurmaOrFail(linkRequest.turma_id);
-    if (!isAdmin(session) && turma.user_id !== session.id) {
+    if (!isAdmin(session) && linkRequest.dirigente_user_id !== session.id) {
       sendJson(response, 403, { error: "Você não pode decidir esta solicitação." });
       return;
     }

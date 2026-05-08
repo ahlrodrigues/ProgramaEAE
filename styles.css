@@ -165,11 +165,43 @@ h4 {
 }
 
 .session-chip {
-  padding: 10px 14px;
+  border: 1px solid rgba(17, 94, 89, 0.2);
   border-radius: 999px;
+  padding: 10px 14px;
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-weight: 700;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.user-menu {
+  position: relative;
+}
+
+.user-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  display: grid;
+  gap: 8px;
+  min-width: 180px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: #fffdf9;
+  box-shadow: var(--shadow);
+  z-index: 20;
+}
+
+.user-menu-panel .ghost-action {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.user-menu-panel[hidden] {
+  display: none;
 }
 
 .ghost-action {
@@ -470,6 +502,19 @@ textarea {
   gap: 12px;
 }
 
+.approvals-subtabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0 4px;
+}
+
+.approvals-subtabs .ghost-action.is-active {
+  border-color: rgba(17, 94, 89, 0.36);
+  background: rgba(214, 240, 235, 0.7);
+  color: var(--ink);
+}
+
 .admin-user-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) repeat(3, auto);
@@ -506,6 +551,26 @@ textarea {
 .invite-status {
   font-size: 0.85rem;
   color: #7b4a30;
+}
+
+.turma-card {
+  display: grid;
+  gap: 8px;
+}
+
+.turma-link-requests {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: rgba(255, 253, 249, 0.85);
+}
+
+.turma-link-request-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
 }
 
 .toast-region {
