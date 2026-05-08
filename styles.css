@@ -503,6 +503,11 @@ textarea {
   min-width: 170px;
 }
 
+.invite-status {
+  font-size: 0.85rem;
+  color: #7b4a30;
+}
+
 .toast-region {
   position: fixed;
   top: 24px;

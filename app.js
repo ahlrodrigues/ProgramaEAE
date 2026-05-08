@@ -3,6 +3,7 @@ const state = {
   users: [],
   accessEvents: [],
   pendingInvites: [],
+  pendingInviteLocks: {},
   turmas: [],
   activeTurmasForCopy: [],
   currentTurmaId: null,
@@ -521,6 +522,9 @@ function setupForms() {
         method: button.dataset.userInvite ? "POST" : "PUT",
         body,
       });
+      if (button.dataset.userInvite && turmaSelect?.value) {
+        delete state.pendingInviteLocks[`${userId}:${turmaSelect.value}`];
+      }
       state.users = state.users.map((user) => (user.id === userId && response.user ? response.user : user));
       if (state.session?.id === userId) {
         state.session = response.user;
@@ -531,6 +535,13 @@ function setupForms() {
       const actionFeedback = getApprovalActionFeedback(button, response);
       showToast("success", actionFeedback.title, actionFeedback.message);
     } catch (error) {
+      if (button.dataset.userInvite && error?.message?.includes("Já existe um convite pendente")) {
+        const selectedTurmaId = String(turmaSelect?.value || "");
+        if (selectedTurmaId) {
+          state.pendingInviteLocks[`${userId}:${selectedTurmaId}`] = true;
+        }
+        updateInviteRowState(userId);
+      }
       const errorTitle = button.dataset.userInvite
         ? "Erro ao enviar convite"
         : button.dataset.userApprove
@@ -540,6 +551,12 @@ function setupForms() {
             : "Erro ao atualizar usuário";
       showToast("error", errorTitle, error.message);
     }
+  });
+
+  adminUsersList?.addEventListener("change", (event) => {
+    const select = event.target.closest("[data-secretary-turma]");
+    if (!select) return;
+    updateInviteRowState(Number(select.dataset.secretaryTurma));
   });
 
   pendingInvites?.addEventListener("click", async (event) => {
@@ -1020,8 +1037,14 @@ function renderAdminUserManagement() {
         inviteButton.textContent = "Convidar";
         inviteButton.disabled = !state.activeTurmasForCopy.length;
 
+        const inviteStatus = document.createElement("span");
+        inviteStatus.className = "invite-status";
+        inviteStatus.dataset.inviteStatus = String(user.id);
+
         item.appendChild(turmaSelect);
         item.appendChild(inviteButton);
+        item.appendChild(inviteStatus);
+        updateInviteRowState(user.id);
       } else {
         const approveButton = document.createElement("button");
         approveButton.type = "button";
@@ -1075,6 +1098,27 @@ function renderAdminUserManagement() {
     item.appendChild(saveButton);
     adminUsersList.appendChild(item);
   });
+}
+
+function updateInviteRowState(userId) {
+  const turmaSelect = adminUsersList?.querySelector(`[data-secretary-turma="${userId}"]`);
+  const inviteButton = adminUsersList?.querySelector(`[data-user-invite="${userId}"]`);
+  const inviteStatus = adminUsersList?.querySelector(`[data-invite-status="${userId}"]`);
+  if (!turmaSelect || !inviteButton) {
+    return;
+  }
+
+  const hasTurmas = state.activeTurmasForCopy.length > 0;
+  const key = `${userId}:${turmaSelect.value || ""}`;
+  const isLocked = Boolean(state.pendingInviteLocks[key]);
+  inviteButton.disabled = !hasTurmas || isLocked;
+  inviteButton.textContent = isLocked ? "Convite pendente" : "Convidar";
+  if (!inviteStatus) {
+    return;
+  }
+  inviteStatus.textContent = isLocked
+    ? "Já existe convite pendente para esta turma."
+    : "";
 }
 
 function renderAccessHistory() {
