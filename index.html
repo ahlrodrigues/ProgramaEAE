@@ -55,6 +55,7 @@
         <nav class="tabs" aria-label="Seções principais">
           <button class="tab is-active" data-tab-target="login">Login</button>
           <button class="tab" data-tab-target="cadastro">Cadastro</button>
+          <button class="tab" data-tab-target="aprovacoes">Aprovações</button>
           <button class="tab" data-tab-target="turmas">Turmas</button>
           <button class="tab" data-tab-target="programa-cb" data-tab-panel-target="programa">
             Programa CB
@@ -107,7 +108,7 @@
           <form id="register-form" class="card-grid">
             <div class="inline-title">
               <h4>Criar conta</h4>
-              <p>Cadastro inicial para coordenadores, gestores ou secretaria.</p>
+              <p>Cadastro inicial com aprovação de perfil.</p>
             </div>
             <label>
               <span>Nome</span>
@@ -122,18 +123,19 @@
               <input type="password" name="password" placeholder="Mínimo de 6 caracteres" required />
             </label>
             <label>
-              <span>Perfil</span>
-              <select name="role">
-                <option value="Admin">Admin</option>
+              <span>Perfil solicitado</span>
+              <select name="requestedRole">
                 <option value="Dirigente" selected>Dirigente</option>
+                <option value="Secretário">Secretário</option>
               </select>
             </label>
-            <button type="submit" class="primary-action">Criar conta</button>
+            <button type="submit" class="primary-action">Solicitar cadastro</button>
           </form>
 
           <div class="saved-summary" id="auth-notice">
             Entre ou crie uma conta para começar.
           </div>
+          <div class="saved-summary pending-invites" id="pending-invites" hidden></div>
         </section>
 
         <section class="panel" data-tab-panel="cadastro">
@@ -171,16 +173,37 @@
           <div class="saved-summary" id="contacts-summary">
             Selecione uma turma para cadastrar dirigente, secretários e contatos.
           </div>
+        </section>
 
-          <section id="admin-users-section" class="saved-summary admin-users-section" hidden>
+        <section class="panel" data-tab-panel="aprovacoes">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow">Acessos</span>
+              <h3 id="approvals-panel-title">Aprovações e convites</h3>
+            </div>
+            <p id="approvals-panel-description">Solicitações de perfil e convites de turma visíveis para dirigentes aprovados.</p>
+          </div>
+
+          <section id="admin-users-section" class="saved-summary admin-users-section">
             <div class="section-head section-head-compact">
               <div>
-                <span class="eyebrow">Admin</span>
-                <h4>Gestão de usuários</h4>
+                <span class="eyebrow" id="admin-users-eyebrow">Solicitações</span>
+                <h4 id="admin-users-title">Perfis pendentes</h4>
               </div>
-              <p>Atualize o perfil de acesso dos usuários cadastrados.</p>
+              <p id="admin-users-description">Aprove solicitações de dirigente e acompanhe usuários cadastrados.</p>
             </div>
             <div id="admin-users-list" class="admin-users-list"></div>
+          </section>
+
+          <section id="access-history-section" class="saved-summary admin-users-section">
+            <div class="section-head section-head-compact">
+              <div>
+                <span class="eyebrow">Histórico</span>
+                <h4>Registro de aprovações e convites</h4>
+              </div>
+              <p>Mostra quem aprovou cada perfil; convites de turma entrarão aqui na próxima etapa.</p>
+            </div>
+            <div id="access-history-list" class="admin-users-list"></div>
           </section>
         </section>
 
@@ -197,7 +220,7 @@
               </div>
             </div>
           </div>
-          <p class="list-hint">Clique na turma para editar.</p>
+          <p class="list-hint">Clique na turma para editar. O salvamento dos dados é automático.</p>
           <div class="saved-summary turma-list" id="turma-list">
             <p class="list-empty">As turmas cadastradas aparecerão aqui.</p>
           </div>

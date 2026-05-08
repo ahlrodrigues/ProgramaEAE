@@ -1,6 +1,8 @@
 const state = {
   session: null,
   users: [],
+  accessEvents: [],
+  pendingInvites: [],
   turmas: [],
   activeTurmasForCopy: [],
   currentTurmaId: null,
@@ -22,9 +24,17 @@ const sessionChip = document.querySelector("#session-chip");
 const loginForm = document.querySelector("#login-form");
 const registerForm = document.querySelector("#register-form");
 const contactsForm = document.querySelector("#contacts-form");
+const contactsSaveButton = contactsForm?.querySelector('button[type="submit"]');
 const contactsSummary = document.querySelector("#contacts-summary");
 const adminUsersSection = document.querySelector("#admin-users-section");
 const adminUsersList = document.querySelector("#admin-users-list");
+const accessHistoryList = document.querySelector("#access-history-list");
+const accessHistorySection = document.querySelector("#access-history-section");
+const approvalsPanelTitle = document.querySelector("#approvals-panel-title");
+const approvalsPanelDescription = document.querySelector("#approvals-panel-description");
+const adminUsersEyebrow = document.querySelector("#admin-users-eyebrow");
+const adminUsersTitle = document.querySelector("#admin-users-title");
+const adminUsersDescription = document.querySelector("#admin-users-description");
 const turmaSecretariesList = document.querySelector("#turma-secretaries-list");
 const addTurmaSecretaryButton = document.querySelector("#add-turma-secretary-button");
 const editContactsButton = document.querySelector("#edit-contacts-button");
@@ -32,6 +42,7 @@ const turmaForm = document.querySelector("#turma-form");
 const turmaSummary = document.querySelector("#turma-summary");
 const turmaList = document.querySelector("#turma-list");
 const authNotice = document.querySelector("#auth-notice");
+const pendingInvites = document.querySelector("#pending-invites");
 const logoutButton = document.querySelector("#logout-button");
 const newTurmaButton = document.querySelector("#new-turma-button");
 const scopeButtons = Array.from(document.querySelectorAll("[data-scope-button]"));
@@ -77,6 +88,18 @@ const MAX_TRAILING_EMPTY_COLUMNS = 2;
 const TRAILING_EMPTY_COLUMNS_TRIM_THRESHOLD = 3;
 const MIN_MANUAL_COLUMN_WIDTH_PX = 40;
 const STUDENTS_TEMPLATE_CSV = "nome,email,whatsapp\nAluno Exemplo,aluno@example.org,(11) 99999-0000\n";
+const AUTOSAVE_DELAY_MS = 900;
+const autosaveState = {
+  turmaTimer: null,
+  turmaInFlight: false,
+  turmaDirty: false,
+  contactsTimer: null,
+  contactsInFlight: false,
+  contactsDirty: false,
+  programTimer: null,
+  programInFlight: false,
+  programDirty: false,
+};
 let toastDismissTimer = null;
 
 setupTabs();
@@ -95,6 +118,11 @@ async function bootstrap() {
     const session = await apiRequest("/api/session");
     state.session = session.user;
     renderSession();
+    if (!hasAppAccess()) {
+      await renderPendingAccessState();
+      activateTab("login");
+      return;
+    }
     await loadReferenceData();
     await loadTurmas();
     activateTab("turmas");
@@ -131,7 +159,7 @@ function createEmptyProgram() {
     id: null,
     meta: {
       title: template.meta?.title || fallback.meta.title,
-      startDate: template.meta?.startDate || fallback.meta.startDate,
+      startDate: getProgramStartDateForCurrentTab(template.meta?.startDate || fallback.meta.startDate),
       endDate: template.meta?.endDate || fallback.meta.endDate,
     },
     headers,
@@ -201,27 +229,31 @@ function setupTabs() {
         return;
       }
 
+      if (targetPanel === "aprovacoes") {
+        if (canManageUserApprovals() || canInviteSecretaries()) {
+          try {
+            await loadReferenceData();
+          } catch (error) {
+            showToast("error", "Erro ao carregar aprovações", error.message);
+          }
+        }
+        return;
+      }
+
       if (targetPanel !== "programa") {
         return;
       }
 
-      if (state.currentProgramTab === "programa-cb") {
-        state.program = createEmptyProgram();
-        state.manualColumnWidths = {};
-        renderProgram();
+      if (!state.currentTurmaId) {
+        turmaSummary.hidden = false;
+        turmaSummary.textContent = "Selecione uma turma para acessar o programa correspondente.";
+        activateTab("turmas");
         return;
       }
 
-      if (state.currentTurmaId) {
-        selectTurma(state.currentTurmaId).catch((error) => {
-          turmaSummary.textContent = error.message;
-        });
-        return;
-      }
-
-      state.program = createEmptyProgram();
-      state.manualColumnWidths = {};
-      renderProgram();
+      selectTurma(state.currentTurmaId).catch((error) => {
+        turmaSummary.textContent = error.message;
+      });
     });
   });
 }
@@ -250,6 +282,8 @@ function setupForms() {
   });
 
   newTurmaButton.addEventListener("click", () => {
+    cancelAutosaveQueue("turma");
+    cancelAutosaveQueue("program");
     state.currentTurmaId = null;
     state.isCreatingTurma = true;
     state.isTurmaDetailsOpen = true;
@@ -283,6 +317,7 @@ function setupForms() {
 
   addTurmaSecretaryButton?.addEventListener("click", () => {
     appendSecretaryField(turmaSecretariesList, "");
+    scheduleTurmaAutosave();
   });
 
   studentsTemplateButton?.addEventListener("click", openStudentsTemplateDialog);
@@ -326,6 +361,11 @@ function setupForms() {
 
   turmaForm.elements.horarioInicio?.addEventListener("click", openNativeTimePicker);
   turmaForm.elements.horarioInicio?.addEventListener("focus", openNativeTimePicker);
+
+  turmaForm.addEventListener("input", handleTurmaAutosaveInput);
+  turmaForm.addEventListener("change", handleTurmaAutosaveInput);
+  contactsForm.addEventListener("input", handleContactsAutosaveInput);
+  contactsForm.addEventListener("change", handleContactsAutosaveInput);
 
   archiveButton.addEventListener("click", async () => {
     if (!state.currentTurmaId) return;
@@ -374,6 +414,12 @@ function setupForms() {
       state.session = response.user;
       loginForm.reset();
       renderSession();
+      if (!hasAppAccess()) {
+        await renderPendingAccessState();
+        showToast("success", "Login realizado", "Seu cadastro ainda aguarda aprovação.");
+        activateTab("login");
+        return;
+      }
       await loadReferenceData();
       authNotice.textContent = "Login realizado com sucesso.";
       showToast("success", "Login realizado", "Sua sessão foi iniciada com sucesso.");
@@ -400,6 +446,12 @@ function setupForms() {
       state.session = response.user;
       registerForm.reset();
       renderSession();
+      if (!hasAppAccess()) {
+        await renderPendingAccessState();
+        showToast("success", "Cadastro solicitado", "Sua solicitação foi registrada e aguarda aprovação.");
+        activateTab("login");
+        return;
+      }
       await loadReferenceData();
       authNotice.textContent = "Conta criada e sessão iniciada.";
       showToast("success", "Conta criada", "Sua conta foi criada e a sessão já está ativa.");
@@ -413,33 +465,8 @@ function setupForms() {
 
   turmaForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-
-    if (!state.session) {
-      activateTab("login");
-      return;
-    }
-
-    const formPayload = Object.fromEntries(new FormData(turmaForm).entries());
-    const payload = buildTurmaPayload({
-      ...formPayload,
-      ownerUserId: formPayload.ownerUserId,
-      copyProgramFromTurmaId: formPayload.copyProgramFromTurmaId,
-      secretarios: collectSecretaryValues(turmaSecretariesList),
-    });
-    const method = state.currentTurmaId ? "PUT" : "POST";
-    const path = state.currentTurmaId
-      ? `/api/turmas/${state.currentTurmaId}`
-      : "/api/turmas";
-
     try {
-      const response = await apiRequest(path, { method, body: payload });
-      state.currentScope = response.turma.archivedAt ? "archived" : "active";
-      state.isEditingTurma = false;
-      renderScopeButtons();
-      await loadTurmas(response.turma.id);
-      turmaSummary.textContent = `Turma ${response.turma.nome} salva com sucesso.`;
-      showToast("success", "Cadastro salvo", `Turma ${response.turma.nome} atualizada com sucesso.`);
-      activateTab("programa");
+      await persistTurmaForm({ autosave: false, navigateToProgram: true });
     } catch (error) {
       turmaSummary.textContent = error.message;
       showToast("error", "Erro ao salvar", error.message);
@@ -448,31 +475,8 @@ function setupForms() {
 
   contactsForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-
-    if (!state.session) {
-      activateTab("login");
-      return;
-    }
-
-    const payload = {
-      dirigenteNome: contactsForm.elements.dirigenteNome.value,
-      secretarios: state.session?.secretarios ?? [],
-      telefone: contactsForm.elements.telefone.value,
-      whatsapp: contactsForm.elements.whatsapp.value,
-      email: contactsForm.elements.email.value,
-    };
-
     try {
-      const response = await apiRequest("/api/profile", {
-        method: "PUT",
-        body: payload,
-      });
-      state.session = response.user;
-      renderSession();
-      renderContactsForm();
-      renderContactsSummary();
-      contactsSummary.textContent = "Dirigente e contatos salvos com sucesso.";
-      showToast("success", "Contatos salvos", "Dirigente e contatos atualizados com sucesso.");
+      await persistContactsProfile({ autosave: false });
     } catch (error) {
       contactsSummary.textContent = error.message;
       showToast("error", "Erro ao salvar contatos", error.message);
@@ -493,31 +497,62 @@ function setupForms() {
   });
 
   adminUsersList?.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-user-save]");
+    const button = event.target.closest("[data-user-save], [data-user-approve], [data-user-reject], [data-user-invite]");
     if (!button) {
       return;
     }
 
-    const userId = Number(button.dataset.userSave);
+    const userId = Number(button.dataset.userSave || button.dataset.userApprove || button.dataset.userReject || button.dataset.userInvite);
     const select = adminUsersList.querySelector(`[data-user-role="${userId}"]`);
-    if (!select) {
-      return;
-    }
+    const turmaSelect = adminUsersList.querySelector(`[data-secretary-turma="${userId}"]`);
+    const body = button.dataset.userInvite
+      ? {
+          userId,
+          turmaId: turmaSelect?.value,
+        }
+      : button.dataset.userApprove
+      ? { action: "approve" }
+      : button.dataset.userReject
+        ? { action: "reject" }
+        : { role: select?.value };
 
     try {
-      const response = await apiRequest(`/api/users/${userId}`, {
-        method: "PUT",
-        body: { role: select.value },
+      const response = await apiRequest(button.dataset.userInvite ? "/api/turma-invites" : `/api/users/${userId}`, {
+        method: button.dataset.userInvite ? "POST" : "PUT",
+        body,
       });
-      state.users = state.users.map((user) => (user.id === userId ? response.user : user));
+      state.users = state.users.map((user) => (user.id === userId && response.user ? response.user : user));
       if (state.session?.id === userId) {
         state.session = response.user;
         renderSession();
       }
+      await loadReferenceData();
       renderAdminUserManagement();
       showToast("success", "Usuário atualizado", `Perfil de ${response.user.name} salvo com sucesso.`);
     } catch (error) {
       showToast("error", "Erro ao atualizar usuário", error.message);
+    }
+  });
+
+  pendingInvites?.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-invite-accept]");
+    if (!button) return;
+
+    try {
+      const response = await apiRequest(`/api/turma-invites/${button.dataset.inviteAccept}/accept`, {
+        method: "POST",
+      });
+      state.session = response.user;
+      renderSession();
+      await loadReferenceData();
+      await loadTurmas();
+      pendingInvites.hidden = true;
+      pendingInvites.replaceChildren();
+      authNotice.textContent = "Convite aceito. Acesso liberado.";
+      showToast("success", "Convite aceito", "Você já pode acessar a turma.");
+      activateTab("turmas");
+    } catch (error) {
+      showToast("error", "Erro ao aceitar convite", error.message);
     }
   });
 }
@@ -530,23 +565,27 @@ function setupProgramActions() {
     nextProgram.meta.endDate = endDateInput.value || nextProgram.meta.endDate;
     state.program = nextProgram;
     renderProgram();
+    scheduleProgramAutosave();
   });
 
   addRowButton?.addEventListener("click", () => {
     state.program.rows.push(new Array(state.program.headers.length).fill(""));
     renderProgram();
+    scheduleProgramAutosave();
   });
 
   removeLastRowButton?.addEventListener("click", () => {
     if (!state.program.rows.length) return;
     state.program.rows.pop();
     renderProgram();
+    scheduleProgramAutosave();
   });
 
   addColumnButton?.addEventListener("click", () => {
     state.program.headers.push(`Nova coluna ${state.program.headers.length + 1}`);
     state.program.rows = state.program.rows.map((row) => [...row, ""]);
     renderProgram();
+    scheduleProgramAutosave();
   });
 
   removeLastColumnButton?.addEventListener("click", () => {
@@ -554,6 +593,7 @@ function setupProgramActions() {
     state.program.headers.pop();
     state.program.rows = state.program.rows.map((row) => row.slice(0, state.program.headers.length));
     renderProgram();
+    scheduleProgramAutosave();
   });
 
   editProgramButton?.addEventListener("click", () => {
@@ -577,7 +617,10 @@ function setupProgramActions() {
     exportMenu?.removeAttribute("open");
   });
   [titleInput, startDateInput, endDateInput].forEach((input) => {
-    input.addEventListener("input", syncProgramMeta);
+    input.addEventListener("input", () => {
+      syncProgramMeta();
+      scheduleProgramAutosave();
+    });
   });
   startDateInput.addEventListener("input", handleProgramDateInput);
   startDateInput.addEventListener("blur", handleProgramDateBlur);
@@ -587,20 +630,45 @@ function setupProgramActions() {
 
 async function loadReferenceData() {
   state.users = [];
+  state.accessEvents = [];
   state.activeTurmasForCopy = [];
-  if (!state.session || state.session.role !== "Admin") {
+  await loadPendingInvites();
+  renderPendingInvites();
+  if (!hasAppAccess()) {
     renderAdminUserManagement();
+    renderAccessHistory();
+    renderCopyProgramField();
+    return;
+  }
+
+  if (!canManageUserApprovals()) {
+    if (canInviteSecretaries()) {
+      const [usersResponse, copySourcesResponse] = await Promise.all([
+        apiRequest("/api/secretary-candidates"),
+        apiRequest("/api/turmas?scope=active"),
+      ]);
+      state.users = usersResponse.users;
+      state.activeTurmasForCopy = copySourcesResponse.turmas;
+      renderAdminUserManagement();
+      renderAccessHistory();
+      return;
+    }
+    renderAdminUserManagement();
+    renderAccessHistory();
     await loadCopySourceTurmas();
     return;
   }
 
-  const [usersResponse, copySourcesResponse] = await Promise.all([
+  const [usersResponse, accessEventsResponse, copySourcesResponse] = await Promise.all([
     apiRequest("/api/users"),
+    apiRequest("/api/access-events"),
     apiRequest("/api/turmas?scope=active"),
   ]);
   state.users = usersResponse.users;
+  state.accessEvents = accessEventsResponse.events;
   state.activeTurmasForCopy = copySourcesResponse.turmas;
   renderAdminUserManagement();
+  renderAccessHistory();
 }
 
 async function loadCopySourceTurmas() {
@@ -622,10 +690,13 @@ async function loadTurmas(preferredTurmaId = null) {
   ]);
   state.activeTurmasForCopy = activeResponse.turmas;
   state.turmas = [...activeResponse.turmas, ...archivedResponse.turmas];
+  updateAccessControlledTabs();
   renderTurmaList();
   renderCopyProgramField();
 
   if (!state.turmas.length) {
+    cancelAutosaveQueue("turma");
+    cancelAutosaveQueue("program");
     state.currentTurmaId = null;
     state.isCreatingTurma = false;
     state.isTurmaDetailsOpen = false;
@@ -665,14 +736,18 @@ async function loadTurmas(preferredTurmaId = null) {
 }
 
 async function selectTurma(turmaId) {
+  cancelAutosaveQueue("turma");
+  cancelAutosaveQueue("program");
   const response = await apiRequest(`/api/turmas/${turmaId}`);
   state.currentTurmaId = response.turma.id;
+  state.currentProgramTab = getProgramTabForTurmaType(response.turma.tipo) || state.currentProgramTab;
   state.isCreatingTurma = false;
   state.isTurmaDetailsOpen = true;
   state.isEditingTurma = false;
   updateTurmaInState(response.turma);
   state.program = resolveProgramForActiveTab(response.program);
   state.manualColumnWidths = {};
+  updateAccessControlledTabs();
   renderTurmaList();
   renderTurmaForm(response.turma);
   renderContactsForm(response.turma);
@@ -878,17 +953,26 @@ function renderAdminUserManagement() {
     return;
   }
 
-  const isAdmin = state.session?.role === "Admin";
-  adminUsersSection.hidden = !isAdmin;
+  const canManage = canManageUserApprovals();
+  const canInvite = canInviteSecretaries();
+  const isAdmin = state.session?.role === "Admin" && hasAppAccess();
+  const isSecretary = state.session?.role === "Secretário" && hasAppAccess();
+  adminUsersSection.hidden = !canManage && !canInvite;
   adminUsersList.replaceChildren();
+  renderApprovalsPanelCopy();
+  if (accessHistorySection) {
+    accessHistorySection.hidden = isSecretary;
+  }
 
-  if (!isAdmin) {
+  if (!canManage && !canInvite) {
     return;
   }
 
   if (!state.users.length) {
     const emptyState = document.createElement("p");
-    emptyState.textContent = "Nenhum usuário disponível no momento.";
+    emptyState.textContent = isSecretary
+      ? "Nenhum secretário pendente disponível para convite no momento."
+      : "Nenhum usuário disponível no momento.";
     adminUsersList.appendChild(emptyState);
     return;
   }
@@ -902,9 +986,61 @@ function renderAdminUserManagement() {
     const title = document.createElement("strong");
     title.textContent = user.name;
     const details = document.createElement("span");
-    details.textContent = `${user.email} - ${user.role}`;
+    details.textContent = `${user.email} - ${formatUserAccessLabel(user)}`;
     meta.appendChild(title);
     meta.appendChild(details);
+
+    if (user.accessStatus === "pending") {
+      item.appendChild(meta);
+
+      if (user.requestedRole === "Secretário") {
+        const turmaSelect = document.createElement("select");
+        turmaSelect.className = "admin-user-role";
+        turmaSelect.dataset.secretaryTurma = String(user.id);
+        state.activeTurmasForCopy.forEach((turma) => {
+          const option = document.createElement("option");
+          option.value = String(turma.id);
+          option.textContent = turma.nome;
+          turmaSelect.appendChild(option);
+        });
+        turmaSelect.disabled = !state.activeTurmasForCopy.length;
+
+        const inviteButton = document.createElement("button");
+        inviteButton.type = "button";
+        inviteButton.className = "ghost-action";
+        inviteButton.dataset.userInvite = String(user.id);
+        inviteButton.textContent = "Convidar";
+        inviteButton.disabled = !state.activeTurmasForCopy.length;
+
+        item.appendChild(turmaSelect);
+        item.appendChild(inviteButton);
+      } else {
+        const approveButton = document.createElement("button");
+        approveButton.type = "button";
+        approveButton.className = "ghost-action";
+        approveButton.dataset.userApprove = String(user.id);
+        approveButton.textContent = "Aprovar dirigente";
+        item.appendChild(approveButton);
+      }
+
+      if (isAdmin) {
+        const rejectButton = document.createElement("button");
+        rejectButton.type = "button";
+        rejectButton.className = "ghost-action";
+        rejectButton.dataset.userReject = String(user.id);
+        rejectButton.textContent = "Rejeitar";
+        item.appendChild(rejectButton);
+      }
+
+      adminUsersList.appendChild(item);
+      return;
+    }
+
+    if (!isAdmin) {
+      item.appendChild(meta);
+      adminUsersList.appendChild(item);
+      return;
+    }
 
     const roleSelect = document.createElement("select");
     roleSelect.className = "admin-user-role";
@@ -931,6 +1067,139 @@ function renderAdminUserManagement() {
     item.appendChild(saveButton);
     adminUsersList.appendChild(item);
   });
+}
+
+function renderAccessHistory() {
+  if (!accessHistoryList) {
+    return;
+  }
+
+  accessHistoryList.replaceChildren();
+
+  if (!canManageUserApprovals()) {
+    const emptyState = document.createElement("p");
+    emptyState.textContent = "Aprovações e convites ficam disponíveis para dirigentes aprovados.";
+    accessHistoryList.appendChild(emptyState);
+    return;
+  }
+
+  if (!state.accessEvents.length) {
+    const emptyState = document.createElement("p");
+    emptyState.textContent = "Nenhuma aprovação ou convite registrado ainda.";
+    accessHistoryList.appendChild(emptyState);
+    return;
+  }
+
+  state.accessEvents.forEach((event) => {
+    const item = document.createElement("div");
+    item.className = "admin-user-item access-history-item";
+
+    const meta = document.createElement("div");
+    meta.className = "admin-user-meta";
+
+    const title = document.createElement("strong");
+    title.textContent = event.type === "profile_request"
+      ? `${event.userName} solicitou perfil de ${event.requestedRole}`
+      : event.title;
+
+    const details = document.createElement("span");
+    if (event.type === "turma_invite") {
+      details.textContent =
+        `Status: ${formatAccessEventStatus(event.status)} - ` +
+        `Turma: ${event.turmaName || "não informada"} - ` +
+        `Convidado por: ${event.invitedByName || "não informado"}`;
+    } else {
+      const approver = event.decidedByName || "Aguardando aprovação";
+      details.textContent =
+        `Status: ${formatAccessEventStatus(event.status)} - ` +
+        `Aprovado por: ${approver} - ` +
+        "Convidado por: Sem convite vinculado";
+    }
+
+    const dates = document.createElement("span");
+    dates.textContent = `Criado em: ${formatDateTime(event.createdAt)}${
+      event.decidedAt ? ` - Decidido em: ${formatDateTime(event.decidedAt)}` : ""
+    }`;
+
+    meta.appendChild(title);
+    meta.appendChild(details);
+    meta.appendChild(dates);
+    item.appendChild(meta);
+    accessHistoryList.appendChild(item);
+  });
+}
+
+function formatAccessEventStatus(status) {
+  const labels = {
+    pending: "Pendente",
+    active: "Aprovado",
+    approved: "Aprovado",
+    accepted: "Aceito",
+    rejected: "Rejeitado",
+  };
+  return labels[status] || status || "Sem status";
+}
+
+async function loadPendingInvites() {
+  if (!state.session || state.session.requestedRole !== "Secretário") {
+    state.pendingInvites = [];
+    return;
+  }
+
+  try {
+    const response = await apiRequest("/api/my-invites");
+    state.pendingInvites = response.invites || [];
+  } catch (error) {
+    state.pendingInvites = [];
+  }
+}
+
+function renderPendingInvites() {
+  if (!pendingInvites) {
+    return;
+  }
+
+  pendingInvites.replaceChildren();
+  pendingInvites.hidden = !state.pendingInvites.length;
+  if (!state.pendingInvites.length) {
+    return;
+  }
+
+  const heading = document.createElement("h4");
+  heading.textContent = "Convites pendentes";
+  pendingInvites.appendChild(heading);
+
+  state.pendingInvites.forEach((invite) => {
+    const item = document.createElement("div");
+    item.className = "admin-user-item";
+
+    const meta = document.createElement("div");
+    meta.className = "admin-user-meta";
+    const title = document.createElement("strong");
+    title.textContent = invite.turmaName || "Turma";
+    const details = document.createElement("span");
+    details.textContent = `Convidado por: ${invite.invitedByName || "não informado"} - ${formatDateTime(invite.createdAt)}`;
+    meta.appendChild(title);
+    meta.appendChild(details);
+
+    const acceptButton = document.createElement("button");
+    acceptButton.type = "button";
+    acceptButton.className = "primary-action";
+    acceptButton.dataset.inviteAccept = String(invite.id);
+    acceptButton.textContent = "Aceitar convite";
+
+    item.appendChild(meta);
+    item.appendChild(acceptButton);
+    pendingInvites.appendChild(item);
+  });
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "não informado";
+  }
+
+  return String(value).replace("T", " ").slice(0, 19);
 }
 
 function renderTurmaActions(turma = null) {
@@ -1068,6 +1337,7 @@ function appendSecretaryField(listElement, value = {}) {
     if (!listElement.children.length) {
       appendSecretaryField(listElement);
     }
+    scheduleTurmaAutosave();
   });
 
   fields.appendChild(nameField);
@@ -1357,6 +1627,267 @@ function updateTurmaInState(updatedTurma) {
   }
 }
 
+function getTurmaFormPayload() {
+  const formPayload = Object.fromEntries(new FormData(turmaForm).entries());
+  return buildTurmaPayload({
+    ...formPayload,
+    ownerUserId: formPayload.ownerUserId,
+    copyProgramFromTurmaId: formPayload.copyProgramFromTurmaId,
+    secretarios: collectSecretaryValues(turmaSecretariesList),
+  });
+}
+
+function getContactsPayload() {
+  return {
+    dirigenteNome: contactsForm.elements.dirigenteNome.value,
+    secretarios: state.session?.secretarios ?? [],
+    telefone: contactsForm.elements.telefone.value,
+    whatsapp: contactsForm.elements.whatsapp.value,
+    email: contactsForm.elements.email.value,
+  };
+}
+
+async function persistTurmaForm({ autosave = false, navigateToProgram = false } = {}) {
+  if (!state.session) {
+    activateTab("login");
+    return null;
+  }
+
+  if (autosave && !state.currentTurmaId) {
+    return null;
+  }
+
+  const payload = getTurmaFormPayload();
+  const method = state.currentTurmaId ? "PUT" : "POST";
+  const path = state.currentTurmaId
+    ? `/api/turmas/${state.currentTurmaId}`
+    : "/api/turmas";
+
+  const response = await apiRequest(path, { method, body: payload });
+  state.currentScope = response.turma.archivedAt ? "archived" : "active";
+  state.currentTurmaId = response.turma.id;
+  state.currentProgramTab = getProgramTabForTurmaType(response.turma.tipo) || state.currentProgramTab;
+  updateTurmaInState(response.turma);
+  renderScopeButtons();
+  updateAccessControlledTabs();
+  renderTurmaList();
+  renderTurmaSummary(response.turma);
+  renderTurmaActions(response.turma);
+  if (!autosave) {
+    state.isEditingTurma = false;
+    await loadTurmas(response.turma.id);
+    turmaSummary.textContent = `Turma ${response.turma.nome} salva com sucesso.`;
+    showToast("success", "Cadastro salvo", `Turma ${response.turma.nome} atualizada com sucesso.`);
+    if (navigateToProgram) {
+      activateTab("programa");
+    }
+    return response;
+  }
+
+  turmaSummary.textContent = `Alterações da turma ${response.turma.nome} salvas automaticamente.`;
+  showToast("success", "Turma salva", `As alterações de ${response.turma.nome} foram salvas automaticamente.`);
+  return response;
+}
+
+async function persistContactsProfile({ autosave = false } = {}) {
+  if (!state.session) {
+    activateTab("login");
+    return null;
+  }
+
+  const response = await apiRequest("/api/profile", {
+    method: "PUT",
+    body: getContactsPayload(),
+  });
+  state.session = response.user;
+  renderSession();
+  renderContactsSummary();
+  contactsSummary.textContent = autosave
+    ? "Cadastro salvo automaticamente."
+    : "Dirigente e contatos salvos com sucesso.";
+  if (!autosave) {
+    renderContactsForm();
+    showToast("success", "Contatos salvos", "Dirigente e contatos atualizados com sucesso.");
+  } else {
+    showToast("success", "Cadastro salvo", "Os contatos foram salvos automaticamente.");
+  }
+  return response;
+}
+
+async function persistProgram({ autosave = false } = {}) {
+  if (!state.session) {
+    authNotice.textContent = "Faça login para salvar um programa.";
+    activateTab("login");
+    return null;
+  }
+
+  if (!state.currentTurmaId) {
+    turmaSummary.textContent = "Cadastre uma turma antes de salvar o programa.";
+    activateTab("turmas");
+    return null;
+  }
+
+  syncProgramMeta();
+  const response = await apiRequest(`/api/turmas/${state.currentTurmaId}/program`, {
+    method: "PUT",
+    body: state.program,
+  });
+  state.program = {
+    ...state.program,
+    id: response.program.id,
+    updatedAt: response.program.updatedAt,
+  };
+  if (!autosave) {
+    renderProgram();
+    window.alert("Programa salvo com sucesso para esta turma.");
+    return response;
+  }
+
+  if (saveProgramButton) {
+    saveProgramButton.textContent = "Salvo automaticamente";
+    window.setTimeout(() => {
+      if (saveProgramButton.textContent === "Salvo automaticamente") {
+        saveProgramButton.textContent = "Salvar";
+      }
+    }, 1200);
+  }
+  showToast("success", "Programa salvo", "As alterações do programa foram salvas automaticamente.");
+  return response;
+}
+
+function handleTurmaAutosaveInput(event) {
+  if (!state.session) {
+    return;
+  }
+  if (!event.target?.name) {
+    return;
+  }
+  if (!state.isEditingTurma || !state.currentTurmaId) {
+    return;
+  }
+  scheduleTurmaAutosave();
+}
+
+function handleContactsAutosaveInput(event) {
+  if (!state.session) {
+    return;
+  }
+  if (!event.target?.name || !state.isContactsEditing) {
+    return;
+  }
+  scheduleContactsAutosave();
+}
+
+function scheduleTurmaAutosave() {
+  if (!state.session || !state.isEditingTurma || !state.currentTurmaId) {
+    return;
+  }
+  autosaveState.turmaDirty = true;
+  if (autosaveState.turmaTimer) {
+    window.clearTimeout(autosaveState.turmaTimer);
+  }
+  autosaveState.turmaTimer = window.setTimeout(runTurmaAutosave, AUTOSAVE_DELAY_MS);
+}
+
+async function runTurmaAutosave() {
+  autosaveState.turmaTimer = null;
+  if (autosaveState.turmaInFlight || !autosaveState.turmaDirty) {
+    return;
+  }
+  autosaveState.turmaDirty = false;
+  autosaveState.turmaInFlight = true;
+  turmaSummary.textContent = "Salvando alterações da turma...";
+  try {
+    await persistTurmaForm({ autosave: true });
+  } catch (error) {
+    turmaSummary.textContent = error.message;
+    showToast("error", "Erro no salvamento automático", error.message);
+  } finally {
+    autosaveState.turmaInFlight = false;
+    if (autosaveState.turmaDirty) {
+      scheduleTurmaAutosave();
+    }
+  }
+}
+
+function scheduleContactsAutosave() {
+  if (!state.session || !state.isContactsEditing) {
+    return;
+  }
+  autosaveState.contactsDirty = true;
+  if (autosaveState.contactsTimer) {
+    window.clearTimeout(autosaveState.contactsTimer);
+  }
+  autosaveState.contactsTimer = window.setTimeout(runContactsAutosave, AUTOSAVE_DELAY_MS);
+}
+
+async function runContactsAutosave() {
+  autosaveState.contactsTimer = null;
+  if (autosaveState.contactsInFlight || !autosaveState.contactsDirty) {
+    return;
+  }
+  autosaveState.contactsDirty = false;
+  autosaveState.contactsInFlight = true;
+  contactsSummary.textContent = "Salvando contatos...";
+  try {
+    await persistContactsProfile({ autosave: true });
+  } catch (error) {
+    contactsSummary.textContent = error.message;
+    showToast("error", "Erro no salvamento automático", error.message);
+  } finally {
+    autosaveState.contactsInFlight = false;
+    if (autosaveState.contactsDirty) {
+      scheduleContactsAutosave();
+    }
+  }
+}
+
+function scheduleProgramAutosave() {
+  if (!state.session || !state.currentTurmaId || !state.isProgramEditing) {
+    return;
+  }
+  autosaveState.programDirty = true;
+  if (autosaveState.programTimer) {
+    window.clearTimeout(autosaveState.programTimer);
+  }
+  if (saveProgramButton) {
+    saveProgramButton.textContent = "Salvando...";
+  }
+  autosaveState.programTimer = window.setTimeout(runProgramAutosave, AUTOSAVE_DELAY_MS);
+}
+
+async function runProgramAutosave() {
+  autosaveState.programTimer = null;
+  if (autosaveState.programInFlight || !autosaveState.programDirty) {
+    return;
+  }
+  autosaveState.programDirty = false;
+  autosaveState.programInFlight = true;
+  try {
+    await persistProgram({ autosave: true });
+  } catch (error) {
+    if (saveProgramButton) {
+      saveProgramButton.textContent = "Salvar";
+    }
+    showToast("error", "Erro no salvamento automático", error.message);
+  } finally {
+    autosaveState.programInFlight = false;
+    if (autosaveState.programDirty) {
+      scheduleProgramAutosave();
+    }
+  }
+}
+
+function cancelAutosaveQueue(kind) {
+  const timerKey = `${kind}Timer`;
+  const dirtyKey = `${kind}Dirty`;
+  if (autosaveState[timerKey]) {
+    window.clearTimeout(autosaveState[timerKey]);
+    autosaveState[timerKey] = null;
+  }
+  autosaveState[dirtyKey] = false;
+}
+
 function buildTurmaPayload(partial = {}) {
   const currentTurma = findCurrentTurma();
   const existing = currentTurma || {};
@@ -1380,8 +1911,13 @@ function buildTurmaPayload(partial = {}) {
 }
 
 function renderLoggedOutState(message = "Entre ou crie uma conta para começar.") {
+  cancelAutosaveQueue("turma");
+  cancelAutosaveQueue("contacts");
+  cancelAutosaveQueue("program");
   state.session = null;
   state.users = [];
+  state.accessEvents = [];
+  state.pendingInvites = [];
   state.turmas = [];
   state.activeTurmasForCopy = [];
   state.currentTurmaId = null;
@@ -1396,6 +1932,7 @@ function renderLoggedOutState(message = "Entre ou crie uma conta para começar."
   registerForm.reset();
   renderSession();
   authNotice.textContent = message;
+  renderPendingInvites();
   renderScopeButtons();
   renderOwnerField();
   renderCopyProgramField();
@@ -1459,6 +1996,29 @@ function buildTurmaCardSummary(turma) {
   return parts.filter(Boolean).join(" - ");
 }
 
+function getProgramStartDateForCurrentTab(fallbackValue = "") {
+  if (state.currentProgramTab !== "programa-cb") {
+    return fallbackValue;
+  }
+
+  return getLinkedTurmaStartDateForProgram() || fallbackValue;
+}
+
+function getLinkedTurmaStartDateForProgram() {
+  const turmaStartDate = findCurrentTurma()?.inicio || turmaForm?.elements?.inicio?.value || "";
+  return formatIsoDateForProgramMeta(turmaStartDate);
+}
+
+function formatIsoDateForProgramMeta(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return normalizeDateCellValue(value);
+  }
+
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year}`;
+}
+
 function normalizeSecretaryEntry(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {
@@ -1489,21 +2049,116 @@ function formatSecretarySummary(value) {
 
 function renderSession() {
   sessionChip.textContent = state.session
-    ? `${state.session.name} · ${state.session.role}`
+    ? `${state.session.name} · ${formatUserAccessLabel(state.session)}`
     : "Visitante";
   document.body.classList.toggle("is-authenticated", Boolean(state.session));
   updateAccessControlledTabs();
+  renderApprovalsPanelCopy();
   renderAdminUserManagement();
 }
 
+function renderApprovalsPanelCopy() {
+  const isSecretary = state.session?.role === "Secretário" && hasAppAccess();
+  const canManage = canManageUserApprovals();
+  if (approvalsPanelTitle) {
+    approvalsPanelTitle.textContent = isSecretary ? "Convites de secretários" : "Aprovações e convites";
+  }
+  if (approvalsPanelDescription) {
+    approvalsPanelDescription.textContent = isSecretary
+      ? "Convide secretários pendentes para as turmas em que você participa."
+      : "Solicitações de perfil e convites de turma visíveis para dirigentes aprovados.";
+  }
+  if (adminUsersEyebrow) {
+    adminUsersEyebrow.textContent = isSecretary ? "Convites" : "Solicitações";
+  }
+  if (adminUsersTitle) {
+    adminUsersTitle.textContent = isSecretary ? "Secretários pendentes para convite" : "Perfis pendentes";
+  }
+  if (adminUsersDescription) {
+    adminUsersDescription.textContent = isSecretary
+      ? "Selecione uma turma e envie o convite para liberar acesso do secretário."
+      : "Aprove solicitações de dirigente e acompanhe usuários cadastrados.";
+  }
+  if (accessHistorySection) {
+    accessHistorySection.hidden = isSecretary || !canManage;
+  }
+}
+
+function hasAppAccess() {
+  return state.session?.accessStatus === "active";
+}
+
+function canManageUserApprovals() {
+  return hasAppAccess() && ["Admin", "Dirigente"].includes(state.session?.role);
+}
+
+function canInviteSecretaries() {
+  return hasAppAccess() && ["Admin", "Dirigente", "Secretário"].includes(state.session?.role);
+}
+
+function formatUserAccessLabel(user) {
+  if (!user) {
+    return "Visitante";
+  }
+  if (user.accessStatus === "pending") {
+    return `Pendente (${user.requestedRole || "perfil"})`;
+  }
+  if (user.accessStatus === "rejected") {
+    return `Rejeitado (${user.requestedRole || "perfil"})`;
+  }
+  return user.role;
+}
+
+async function renderPendingAccessState() {
+  cancelAutosaveQueue("turma");
+  cancelAutosaveQueue("contacts");
+  cancelAutosaveQueue("program");
+  state.users = [];
+  state.accessEvents = [];
+  state.pendingInvites = [];
+  state.turmas = [];
+  state.activeTurmasForCopy = [];
+  state.currentTurmaId = null;
+  state.isCreatingTurma = false;
+  state.isTurmaDetailsOpen = false;
+  state.isEditingTurma = false;
+  renderAdminUserManagement();
+  renderTurmaList();
+  renderTurmaForm();
+  renderContactsForm();
+  renderTurmaActions();
+  renderContactsSummary();
+  renderProgram();
+  authNotice.textContent = state.session?.accessStatus === "rejected"
+    ? "Sua solicitação de perfil foi rejeitada. Entre em contato com a coordenação."
+    : `Sua solicitação de ${state.session?.requestedRole || "perfil"} está aguardando aprovação.`;
+  await loadPendingInvites();
+  renderPendingInvites();
+}
+
 function updateAccessControlledTabs() {
+  const selectedTurmaProgramType = getCurrentTurmaProgramType();
+
   tabs.forEach((tab) => {
     const requiresLogin = tab.dataset.tabTarget !== "login";
-    tab.disabled = requiresLogin && !state.session;
+    const requiresApprovalAccess = tab.dataset.tabTarget === "aprovacoes";
+    const programType = getProgramTypeForTab(tab);
+    const requiresMatchingTurma = Boolean(programType);
+    const isDisabledForLogin = requiresLogin && !hasAppAccess();
+    const isDisabledForApprovalAccess = requiresApprovalAccess && !(canManageUserApprovals() || canInviteSecretaries());
+    const isDisabledForMissingTurma = requiresMatchingTurma && (
+      !selectedTurmaProgramType || programType !== selectedTurmaProgramType
+    );
+    tab.disabled = isDisabledForLogin || isDisabledForApprovalAccess || isDisabledForMissingTurma;
     tab.classList.toggle("is-disabled", tab.disabled);
   });
 
   logoutButton.hidden = !state.session;
+
+  const activeTab = tabs.find((tab) => tab.classList.contains("is-active"));
+  if (activeTab?.disabled) {
+    activateTab(hasAppAccess() ? "turmas" : "login");
+  }
 }
 
 function renderScopeButtons() {
@@ -1514,6 +2169,7 @@ function renderScopeButtons() {
 
 function renderProgram() {
   state.program = normalizeProgramStructure(state.program);
+  state.program.meta.startDate = getProgramStartDateForCurrentTab(state.program.meta.startDate);
   syncProgramDateColumn();
   syncDerivedProgramEndDate();
   titleInput.value = state.program.meta.title || "";
@@ -1683,7 +2339,7 @@ function renderProgram() {
 }
 
 function syncProgramMeta() {
-  state.program.meta.startDate = normalizeDateCellValue(startDateInput.value);
+  state.program.meta.startDate = getProgramStartDateForCurrentTab(normalizeDateCellValue(startDateInput.value));
   syncProgramDateColumn();
   syncDerivedProgramEndDate();
   state.program.meta = {
@@ -1694,32 +2350,8 @@ function syncProgramMeta() {
 }
 
 async function saveProgram() {
-  if (!state.session) {
-    authNotice.textContent = "Faça login para salvar um programa.";
-    activateTab("login");
-    return;
-  }
-
-  if (!state.currentTurmaId) {
-    turmaSummary.textContent = "Cadastre uma turma antes de salvar o programa.";
-    activateTab("turmas");
-    return;
-  }
-
   try {
-    syncProgramMeta();
-    const response = await apiRequest(`/api/turmas/${state.currentTurmaId}/program`, {
-      method: "PUT",
-      body: state.program,
-    });
-    state.program = response.program;
-    window.DEFAULT_PROGRAM_TEMPLATE = structuredClone({
-      meta: state.program.meta,
-      headers: state.program.headers,
-      rows: state.program.rows,
-    });
-    renderProgram();
-    window.alert("Programa salvo e atualizado como padrão do sistema.");
+    await persistProgram({ autosave: false });
   } catch (error) {
     window.alert(error.message);
   }
@@ -1759,6 +2391,7 @@ function removeRow(rowIndex) {
   if (!tbody) {
     state.program.rows.splice(rowIndex, 1);
     renderProgram();
+    scheduleProgramAutosave();
     return;
   }
 
@@ -1770,12 +2403,14 @@ function removeRow(rowIndex) {
 
   refreshRowDomMetadata();
   updateProgramEditorLockState(Boolean(findCurrentTurma()?.archivedAt));
+  scheduleProgramAutosave();
 }
 
 function insertRowAfter(rowIndex) {
   const newRow = new Array(state.program.headers.length).fill("");
   state.program.rows.splice(rowIndex + 1, 0, newRow);
   renderProgram();
+  scheduleProgramAutosave();
 }
 
 function removeColumn(columnIndex) {
@@ -1791,6 +2426,7 @@ function removeColumn(columnIndex) {
   const bodyRows = Array.from(table.tBodies[0]?.rows || []);
   if (!colgroup || !headRow) {
     renderProgram();
+    scheduleProgramAutosave();
     return;
   }
 
@@ -1803,6 +2439,7 @@ function removeColumn(columnIndex) {
   refreshColumnDomMetadata();
   updateProgramEditorLockState(Boolean(findCurrentTurma()?.archivedAt));
   updateColumnWidths();
+  scheduleProgramAutosave();
 }
 
 function insertColumnAfter(columnIndex) {
@@ -1815,6 +2452,7 @@ function insertColumnAfter(columnIndex) {
   });
   state.manualColumnWidths = shiftManualColumnWidthsForInsert(state.manualColumnWidths, insertAt);
   renderProgram();
+  scheduleProgramAutosave();
 }
 
 async function archiveCurrentTurma(archive) {
@@ -1903,10 +2541,12 @@ function exportProgramToPdf() {
 }
 
 function activateTab(tabName) {
-  const nextTab = tabs.find((tab) => (
-    tab.dataset.tabTarget === tabName
-    || tab.dataset.tabPanelTarget === tabName
-  ));
+  const nextTab = tabName === "programa"
+    ? tabs.find((tab) => tab.dataset.tabTarget === state.currentProgramTab)
+    : tabs.find((tab) => (
+        tab.dataset.tabTarget === tabName
+        || tab.dataset.tabPanelTarget === tabName
+      ));
   if (nextTab) nextTab.click();
 }
 
@@ -1914,11 +2554,26 @@ function findCurrentTurma() {
   return state.turmas.find((turma) => turma.id === state.currentTurmaId) || null;
 }
 
-function resolveProgramForActiveTab(savedProgram) {
-  if (state.currentProgramTab === "programa-cb") {
-    return createEmptyProgram();
-  }
+function getProgramTypeForTab(tab) {
+  const tabTarget = tab?.dataset?.tabTarget;
+  if (tabTarget === "programa-cb") return "CB";
+  if (tabTarget === "programa-eae") return "EAE";
+  if (tabTarget === "programa-le") return "LE";
+  return null;
+}
 
+function getProgramTabForTurmaType(type) {
+  if (type === "CB") return "programa-cb";
+  if (type === "EAE") return "programa-eae";
+  if (type === "LE") return "programa-le";
+  return null;
+}
+
+function getCurrentTurmaProgramType() {
+  return findCurrentTurma()?.tipo || null;
+}
+
+function resolveProgramForActiveTab(savedProgram) {
   return savedProgram || createEmptyProgram();
 }
 
@@ -2080,6 +2735,7 @@ function handleHeaderInput(event) {
   state.program.headers[columnIndex] = normalizedHeader;
   event.target.size = getHeaderInputSize(normalizedHeader);
   scheduleColumnWidthUpdate(columnIndex);
+  scheduleProgramAutosave();
 }
 
 function handleHeaderBlur(event) {
@@ -2097,6 +2753,7 @@ function handleHeaderBlur(event) {
   syncProgramDateColumn();
   syncDerivedProgramEndDate();
   renderProgram();
+  scheduleProgramAutosave();
 }
 
 function handleRemoveColumnClick(event) {
@@ -2146,17 +2803,20 @@ function handleRowInput(event) {
   if (columnIndex === 0) {
     state.program.rows[rowIndex][columnIndex] = nextValue;
     scheduleColumnWidthUpdate(columnIndex);
+    scheduleProgramAutosave();
     return;
   }
 
   if (isDateColumnHeader(state.program.headers[columnIndex])) {
     state.program.rows[rowIndex][columnIndex] = nextValue;
     scheduleColumnWidthUpdate(columnIndex);
+    scheduleProgramAutosave();
     return;
   }
 
   state.program.rows[rowIndex][columnIndex] = nextValue;
   scheduleColumnWidthUpdate(columnIndex);
+  scheduleProgramAutosave();
 }
 
 function handleAulasFieldBlur(event) {
@@ -2170,6 +2830,7 @@ function handleAulasFieldBlur(event) {
   setEditableFieldValue(event.target, normalizedValue);
   state.program.rows[rowIndex][columnIndex] = normalizedValue;
   scheduleColumnWidthUpdate(columnIndex);
+  scheduleProgramAutosave();
 }
 
 function handleDateFieldBlur(event) {
@@ -2184,18 +2845,21 @@ function handleDateFieldBlur(event) {
   state.program.rows[rowIndex][columnIndex] = normalizedValue;
   syncDerivedProgramEndDate();
   scheduleColumnWidthUpdate(columnIndex);
+  scheduleProgramAutosave();
 }
 
 function handleProgramDateInput(event) {
   event.target.value = normalizeDateCellValue(event.target.value);
   syncProgramMeta();
   renderProgram();
+  scheduleProgramAutosave();
 }
 
 function handleProgramDateBlur(event) {
   event.target.value = normalizeDateCellValue(event.target.value);
   syncProgramMeta();
   renderProgram();
+  scheduleProgramAutosave();
 }
 
 function refreshRowDomMetadata() {
@@ -2265,12 +2929,14 @@ function refreshColumnDomMetadata() {
 
 function updateProgramEditorLockState(isArchived) {
   const isEditable = state.isProgramEditing && !isArchived;
+  const isProgramStartDateEditable = isEditable && state.currentProgramTab !== "programa-cb";
 
   table.classList.toggle("is-readonly", !isEditable);
 
-  [titleInput, startDateInput, endDateInput].forEach((field) => {
+  [titleInput, endDateInput].forEach((field) => {
     field.disabled = !isEditable;
   });
+  startDateInput.disabled = !isProgramStartDateEditable;
 
   if (editProgramButton) {
     editProgramButton.disabled = isArchived;

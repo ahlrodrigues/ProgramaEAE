@@ -13,6 +13,9 @@ Plataforma inicial para gestão de turmas escolares e seus programas de aulas.
 - Cadastro de modalidade, secretário(a)(s), mensageiro e e-mail por turma
 - Importação de alunos com validação básica e modelo CSV para download
 - Gestão administrativa básica de usuários para perfil `Admin`
+- Habilitação das abas de programa conforme o tipo da turma selecionada
+- Data inicial do `Programa CB` vinculada à data de início da turma
+- Salvamento automático em `Cadastro`, `Turmas` e `Programas` durante a edição
 - Editor de programa com programa padrão já carregado da planilha oficial
 - Inclusão e remoção de linhas e colunas
 - Edição livre de cabeçalhos e células
@@ -89,15 +92,48 @@ npm run server:status
 
 ## Próximos passos sugeridos
 
-- Versionamento de programas
-- Histórico de alterações
-- Validação mais rica para planilhas importadas
-- Bot do telegram:
-    - aviso de publicação de temas
-    - agenda da turma
-- Garantir que o aluno esteja ligado a turma e cada turma receba mensagens correspondentes a sua turma.
-- Escrever um manual de utilização em uma página separada
-    - Sugerir utilização do Telegram para o sistema enviar avisos automáticos para a turma
-    - Sugerir e forçar a troca de senha uma vez por ano
-- criar fale conosco
-- criar perguntas frequentes
+### Fase 1: cadastro, perfis e fluxo principal
+
+- Alterar o cadastro para que todo novo usuário entre como `Pendente` e solicite o perfil desejado: `Dirigente` ou `Secretário`.
+- Enviar solicitações de `Dirigente` para uma lista visível aos dirigentes já aprovados e aos admins; uma aprovação deve liberar o perfil de dirigente.
+- Manter aprovações e convites em uma aba própria, visível para todos os dirigentes aprovados, registrando quem aprovou cada perfil e quem convidou cada participante.
+- Manter o `Admin` com permissão para aprovar, rejeitar e alterar perfis quando necessário.
+- Enviar e-mail ao usuário quando sua solicitação de perfil for aprovada ou rejeitada.
+- Validar o fluxo principal: usuário aprovado como dirigente entra na plataforma, cria uma turma, importa os alunos e recebe o programa padrão.
+- Garantir que alterações no programa sejam salvas apenas para a turma selecionada.
+- Melhorar a validação das planilhas de importação de alunos, com mensagens claras para e-mails inválidos, duplicidades e linhas incompletas.
+
+### Fase 2: secretários e permissões por turma
+
+- Manter solicitações de `Secretário` na mesma lista de pendências, aguardando convite para participação em turma.
+- Enviar convite por e-mail para secretários participarem de uma turma específica.
+- Registrar quem enviou cada convite de turma.
+- Permitir que secretários visualizem convites pendentes, aceitem o convite e só então acessem as turmas das quais fazem parte.
+- Registrar o vínculo do secretário por turma, permitindo múltiplas turmas por secretário.
+- Permitir que um secretário crie uma turma; nesse caso, seu nome deve ocupar o campo de dirigente.
+- Permitir que dirigentes e secretários convidem novos secretários para suas turmas.
+- Permitir que um secretário participe de várias turmas.
+- Permitir que um dirigente possua várias turmas e também seja secretário em outras.
+
+### Fase 3: programas e histórico
+
+- Criar versionamento de programas e histórico de alterações.
+- Permitir importação do programa de outra turma do mesmo tipo, removendo informações específicas como data, facilitador e contato.
+- Implementar autoarquivamento da turma 7 dias após a última aula registrada no programa.
+
+### Fase 4: segurança e backup
+
+- Definir a estratégia de criptografia dos dados antes da implementação, especialmente se a descriptografia deve acontecer apenas no navegador.
+- Criar sistema de backup automático ligado a algum drive.
+- Avisar o usuário em todo login quando o backup ainda não estiver configurado.
+- Sugerir e exigir troca de senha uma vez por ano.
+
+### Fase 5: comunicação e conteúdo
+
+- Criar bot do Telegram para aviso de publicação de temas.
+- Criar calendário da turma com eventos e avisos cadastrados pelo dirigente.
+- Garantir que cada aluno receba apenas mensagens correspondentes à sua turma.
+- Escrever manual de utilização em uma página separada, incluindo a sugestão de uso do Telegram para avisos automáticos.
+- Criar página de perguntas frequentes para o perfil do dirigente.
+- Criar página de fale conosco com formulário e integração com mensageiro.
+- Criar rodapé dinâmico com links úteis, contato e informações da plataforma.

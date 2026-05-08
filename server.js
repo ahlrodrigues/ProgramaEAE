@@ -9,11 +9,12 @@ const PORT = Number(process.env.PORT || 3000);
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "eae.sqlite");
-const DEFAULT_PROGRAM_TEMPLATE_PATH = path.join(ROOT_DIR, "default-program-data.js");
-const ROLES = new Set(["Admin", "Dirigente"]);
+const ROLES = new Set(["Admin", "Dirigente", "Secretário", "Pendente"]);
+const REQUESTED_ROLES = new Set(["Dirigente", "Secretário"]);
+const ACCESS_STATUSES = new Set(["pending", "active", "rejected"]);
 const DEFAULT_USERS = [
-  { name: "Admin EAE", email: "admin@eae.local", password: "123456", role: "Admin" },
-  { name: "Dirigente EAE", email: "dirigente@eae.local", password: "123456", role: "Dirigente" },
+  { name: "Admin EAE", email: "admin@eae.local", password: "123456", role: "Admin", requestedRole: "Admin" },
+  { name: "Dirigente EAE", email: "dirigente@eae.local", password: "123456", role: "Dirigente", requestedRole: "Dirigente" },
 ];
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -22,8 +23,13 @@ const db = new DatabaseSync(DB_PATH);
 initializeDatabase();
 
 const insertUser = db.prepare(`
-  INSERT INTO users (name, email, password_hash, role)
-  VALUES (?, ?, ?, ?)
+  INSERT INTO users (name, email, password_hash, role, requested_role, access_status)
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+const insertProfileRequestStmt = db.prepare(`
+  INSERT INTO profile_requests (user_id, requested_role, status)
+  VALUES (?, ?, 'pending')
 `);
 
 const countUsersStmt = db.prepare(`
@@ -42,25 +48,25 @@ const deleteSessionStmt = db.prepare(`
 `);
 
 const getUserById = db.prepare(`
-  SELECT id, name, email, role, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
+  SELECT id, name, email, role, requested_role, access_status, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
   FROM users
   WHERE id = ?
 `);
 
 const getUserByEmail = db.prepare(`
-  SELECT id, name, email, password_hash, role, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
+  SELECT id, name, email, password_hash, role, requested_role, access_status, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
   FROM users
   WHERE email = ?
 `);
 
 const updateSeedUserStmt = db.prepare(`
   UPDATE users
-  SET name = ?, password_hash = ?, role = ?
+  SET name = ?, password_hash = ?, role = ?, requested_role = ?, access_status = 'active'
   WHERE email = ?
 `);
 
 const getUserByToken = db.prepare(`
-  SELECT users.id, users.name, users.email, users.role,
+  SELECT users.id, users.name, users.email, users.role, users.requested_role, users.access_status,
          users.dirigente_nome, users.secretarios_json, users.telefone, users.whatsapp, users.contato_email
   FROM sessions
   JOIN users ON users.id = sessions.user_id
@@ -68,9 +74,84 @@ const getUserByToken = db.prepare(`
 `);
 
 const listUsersStmt = db.prepare(`
-  SELECT id, name, email, role, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
+  SELECT id, name, email, role, requested_role, access_status, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
   FROM users
   ORDER BY name COLLATE NOCASE
+`);
+
+const listPendingUsersStmt = db.prepare(`
+  SELECT id, name, email, role, requested_role, access_status, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
+  FROM users
+  WHERE access_status = 'pending'
+  ORDER BY created_at, name COLLATE NOCASE
+`);
+
+const listPendingSecretaryUsersStmt = db.prepare(`
+  SELECT id, name, email, role, requested_role, access_status, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
+  FROM users
+  WHERE access_status = 'pending' AND requested_role = 'Secretário'
+  ORDER BY created_at, name COLLATE NOCASE
+`);
+
+const listAccessEventsStmt = db.prepare(`
+  SELECT
+    profile_requests.id,
+    profile_requests.user_id,
+    profile_requests.requested_role,
+    profile_requests.status,
+    profile_requests.created_at,
+    profile_requests.decided_at,
+    requester.name AS user_name,
+    requester.email AS user_email,
+    approver.name AS decided_by_name,
+    approver.email AS decided_by_email
+  FROM profile_requests
+  JOIN users AS requester ON requester.id = profile_requests.user_id
+  LEFT JOIN users AS approver ON approver.id = profile_requests.decided_by_user_id
+  ORDER BY profile_requests.created_at DESC
+`);
+
+const listInviteEventsStmt = db.prepare(`
+  SELECT
+    turma_invites.id,
+    turma_invites.turma_id,
+    turma_invites.invited_user_id,
+    turma_invites.invited_by_user_id,
+    turma_invites.status,
+    turma_invites.created_at,
+    turma_invites.accepted_at,
+    turmas.nome AS turma_nome,
+    invited.name AS invited_user_name,
+    invited.email AS invited_user_email,
+    inviter.name AS invited_by_name,
+    inviter.email AS invited_by_email
+  FROM turma_invites
+  JOIN turmas ON turmas.id = turma_invites.turma_id
+  JOIN users AS invited ON invited.id = turma_invites.invited_user_id
+  JOIN users AS inviter ON inviter.id = turma_invites.invited_by_user_id
+  ORDER BY turma_invites.created_at DESC
+`);
+
+const listMyPendingInvitesStmt = db.prepare(`
+  SELECT
+    turma_invites.id,
+    turma_invites.turma_id,
+    turma_invites.invited_user_id,
+    turma_invites.invited_by_user_id,
+    turma_invites.status,
+    turma_invites.created_at,
+    turma_invites.accepted_at,
+    turmas.nome AS turma_nome,
+    invited.name AS invited_user_name,
+    invited.email AS invited_user_email,
+    inviter.name AS invited_by_name,
+    inviter.email AS invited_by_email
+  FROM turma_invites
+  JOIN turmas ON turmas.id = turma_invites.turma_id
+  JOIN users AS invited ON invited.id = turma_invites.invited_user_id
+  JOIN users AS inviter ON inviter.id = turma_invites.invited_by_user_id
+  WHERE turma_invites.invited_user_id = ? AND turma_invites.status = 'pending'
+  ORDER BY turma_invites.created_at DESC
 `);
 
 const updateUserProfileStmt = db.prepare(`
@@ -81,8 +162,20 @@ const updateUserProfileStmt = db.prepare(`
 
 const updateUserRoleStmt = db.prepare(`
   UPDATE users
-  SET role = ?
+  SET role = ?, requested_role = ?, access_status = ?
   WHERE id = ?
+`);
+
+const updateLatestProfileRequestStmt = db.prepare(`
+  UPDATE profile_requests
+  SET status = ?, decided_by_user_id = ?, decided_at = CURRENT_TIMESTAMP
+  WHERE id = (
+    SELECT id
+    FROM profile_requests
+    WHERE user_id = ? AND status = 'pending'
+    ORDER BY created_at DESC
+    LIMIT 1
+  )
 `);
 
 const listTurmasStmt = db.prepare(`
@@ -130,6 +223,38 @@ const listArchivedTurmasByOwnerStmt = db.prepare(`
   FROM turmas
   JOIN users ON users.id = turmas.user_id
   WHERE turmas.user_id = ? AND turmas.archived_at IS NOT NULL
+  ORDER BY turmas.updated_at DESC, turmas.nome COLLATE NOCASE
+`);
+
+const listTurmasByAccessStmt = db.prepare(`
+  SELECT DISTINCT turmas.id, turmas.user_id, turmas.nome, turmas.curso, turmas.modalidade, turmas.tipo, turmas.status,
+         turmas.turno, turmas.professor, turmas.inicio, turmas.observacoes, turmas.horarios,
+         turmas.alunos_json, turmas.dirigente_nome, turmas.secretarios_json,
+         turmas.telefone, turmas.whatsapp, turmas.email, turmas.updated_at, turmas.archived_at,
+         users.name AS owner_name, users.email AS owner_email
+  FROM turmas
+  JOIN users ON users.id = turmas.user_id
+  LEFT JOIN turma_members ON turma_members.turma_id = turmas.id
+    AND turma_members.user_id = ?
+    AND turma_members.status = 'active'
+  WHERE (turmas.user_id = ? OR turma_members.user_id IS NOT NULL)
+    AND turmas.archived_at IS NULL
+  ORDER BY turmas.nome COLLATE NOCASE
+`);
+
+const listArchivedTurmasByAccessStmt = db.prepare(`
+  SELECT DISTINCT turmas.id, turmas.user_id, turmas.nome, turmas.curso, turmas.modalidade, turmas.tipo, turmas.status,
+         turmas.turno, turmas.professor, turmas.inicio, turmas.observacoes, turmas.horarios,
+         turmas.alunos_json, turmas.dirigente_nome, turmas.secretarios_json,
+         turmas.telefone, turmas.whatsapp, turmas.email, turmas.updated_at, turmas.archived_at,
+         users.name AS owner_name, users.email AS owner_email
+  FROM turmas
+  JOIN users ON users.id = turmas.user_id
+  LEFT JOIN turma_members ON turma_members.turma_id = turmas.id
+    AND turma_members.user_id = ?
+    AND turma_members.status = 'active'
+  WHERE (turmas.user_id = ? OR turma_members.user_id IS NOT NULL)
+    AND turmas.archived_at IS NOT NULL
   ORDER BY turmas.updated_at DESC, turmas.nome COLLATE NOCASE
 `);
 
@@ -208,6 +333,45 @@ const cloneProgramStmt = db.prepare(`
   WHERE turma_id = ?
 `);
 
+const getTurmaMemberStmt = db.prepare(`
+  SELECT id, turma_id, user_id, role, status
+  FROM turma_members
+  WHERE turma_id = ? AND user_id = ? AND status = 'active'
+`);
+
+const upsertTurmaMemberStmt = db.prepare(`
+  INSERT INTO turma_members (turma_id, user_id, role, status, invited_by_user_id, updated_at)
+  VALUES (?, ?, ?, 'active', ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(turma_id, user_id) DO UPDATE SET
+    role = excluded.role,
+    status = 'active',
+    invited_by_user_id = excluded.invited_by_user_id,
+    updated_at = CURRENT_TIMESTAMP
+`);
+
+const insertTurmaInviteStmt = db.prepare(`
+  INSERT INTO turma_invites (turma_id, invited_user_id, invited_by_user_id, status)
+  VALUES (?, ?, ?, 'pending')
+`);
+
+const getTurmaInviteStmt = db.prepare(`
+  SELECT id, turma_id, invited_user_id, invited_by_user_id, status
+  FROM turma_invites
+  WHERE id = ?
+`);
+
+const getPendingTurmaInviteByUserAndTurmaStmt = db.prepare(`
+  SELECT id
+  FROM turma_invites
+  WHERE turma_id = ? AND invited_user_id = ? AND status = 'pending'
+`);
+
+const acceptTurmaInviteStmt = db.prepare(`
+  UPDATE turma_invites
+  SET status = 'accepted', accepted_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
 ensureDefaultUsers();
 
 const server = http.createServer(async (request, response) => {
@@ -248,9 +412,14 @@ async function handleApi(request, response, url) {
     }
 
     const totalUsers = countUsersStmt.get().total;
-    const requestedRole = normalizeRole(body.role, totalUsers === 0 ? "Admin" : "Dirigente");
+    const requestedRole = normalizeRequestedRole(body.requestedRole || body.role, "Dirigente");
+    const role = totalUsers === 0 ? "Admin" : "Pendente";
+    const accessStatus = totalUsers === 0 ? "active" : "pending";
     const passwordHash = hashPassword(password);
-    const result = insertUser.run(name, email, passwordHash, requestedRole);
+    const result = insertUser.run(name, email, passwordHash, role, requestedRole, accessStatus);
+    if (accessStatus === "pending") {
+      insertProfileRequestStmt.run(result.lastInsertRowid, requestedRole);
+    }
     const token = crypto.randomUUID();
     insertSession.run(token, result.lastInsertRowid);
 
@@ -299,6 +468,32 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/my-invites") {
+    sendJson(response, 200, { invites: listMyPendingInvitesStmt.all(session.id).map(mapInviteEvent) });
+    return;
+  }
+
+  const acceptInviteMatch = url.pathname.match(/^\/api\/turma-invites\/(\d+)\/accept$/);
+  if (acceptInviteMatch && request.method === "POST") {
+    const invite = getTurmaInviteStmt.get(Number(acceptInviteMatch[1]));
+    if (!invite || invite.invited_user_id !== session.id || invite.status !== "pending") {
+      sendJson(response, 404, { error: "Convite pendente não encontrado." });
+      return;
+    }
+
+    acceptTurmaInviteStmt.run(invite.id);
+    upsertTurmaMemberStmt.run(invite.turma_id, session.id, "Secretário", invite.invited_by_user_id);
+    updateUserRoleStmt.run("Secretário", "Secretário", "active", session.id);
+    updateLatestProfileRequestStmt.run("active", invite.invited_by_user_id, session.id);
+    sendJson(response, 200, { user: mapUser(getUserById.get(session.id)) });
+    return;
+  }
+
+  if (!isActiveAccount(session)) {
+    sendJson(response, 403, { error: "Seu cadastro ainda está aguardando aprovação." });
+    return;
+  }
+
   if (request.method === "PUT" && url.pathname === "/api/profile") {
     const body = await readJsonBody(request);
     const profile = sanitizeUserProfile(body);
@@ -315,14 +510,66 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === "GET" && url.pathname === "/api/users") {
-    requireAdmin(session);
-    sendJson(response, 200, { users: listUsersStmt.all().map(mapUser) });
+    requireUserApprovalAccess(session);
+    sendJson(response, 200, { users: listUsersForApproval(session).map(mapUser) });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/secretary-candidates") {
+    requireSecretaryInviteAccess(session);
+    sendJson(response, 200, { users: listPendingSecretaryUsersStmt.all().map(mapUser) });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/access-events") {
+    requireUserApprovalAccess(session);
+    const events = [
+      ...listAccessEventsStmt.all().map(mapAccessEvent),
+      ...listInviteEventsStmt.all().map(mapInviteEvent),
+    ].sort(compareAccessEvents);
+    sendJson(response, 200, { events });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/turma-invites") {
+    requireSecretaryInviteAccess(session);
+    const body = await readJsonBody(request);
+    const targetUser = getUserById.get(normalizeOptionalId(body.userId));
+    const turma = getTurmaOrFail(normalizeOptionalId(body.turmaId));
+    ensureTurmaAccess(session, turma);
+
+    if (!targetUser) {
+      sendJson(response, 404, { error: "Secretário não encontrado." });
+      return;
+    }
+
+    if (normalizeAccessStatus(targetUser.access_status, "pending") !== "pending" || normalizeRequestedRole(targetUser.requested_role, "Dirigente") !== "Secretário") {
+      sendJson(response, 400, { error: "Selecione um usuário pendente com solicitação de Secretário." });
+      return;
+    }
+
+    if (getPendingTurmaInviteByUserAndTurmaStmt.get(turma.id, targetUser.id)) {
+      sendJson(response, 409, { error: "Já existe um convite pendente para este secretário nesta turma." });
+      return;
+    }
+
+    insertTurmaInviteStmt.run(turma.id, targetUser.id, session.id);
+    logEmailNotification(
+      targetUser.email,
+      "Convite de turma",
+      `Você recebeu um convite para participar da turma ${turma.nome} como Secretário.`
+    );
+
+    sendJson(response, 201, {
+      user: mapUser(getUserById.get(targetUser.id)),
+      turma: mapTurma(turma),
+    });
     return;
   }
 
   const userMatch = url.pathname.match(/^\/api\/users\/(\d+)$/);
   if (userMatch) {
-    requireAdmin(session);
+    requireUserApprovalAccess(session);
     const userId = Number(userMatch[1]);
     const targetUser = getUserById.get(userId);
 
@@ -333,19 +580,18 @@ async function handleApi(request, response, url) {
 
     if (request.method === "PUT") {
       const body = await readJsonBody(request);
-      const nextRole = normalizeRole(body.role, targetUser.role || "Dirigente");
-      const adminUsers = listUsersStmt.all().filter((user) => normalizeRole(user.role, "Dirigente") === "Admin");
-      const isRemovingLastAdmin =
-        normalizeRole(targetUser.role, "Dirigente") === "Admin" &&
-        nextRole !== "Admin" &&
-        adminUsers.length <= 1;
-
-      if (isRemovingLastAdmin) {
-        sendJson(response, 409, { error: "É preciso manter ao menos um usuário Admin." });
-        return;
+      const nextAccess = resolveUserAccessUpdate(session, targetUser, body);
+      updateUserRoleStmt.run(nextAccess.role, nextAccess.requestedRole, nextAccess.accessStatus, userId);
+      if (targetUser.access_status === "pending" && nextAccess.accessStatus !== "pending") {
+        updateLatestProfileRequestStmt.run(nextAccess.accessStatus, session.id, userId);
+        logEmailNotification(
+          targetUser.email,
+          nextAccess.accessStatus === "active" ? "Cadastro aprovado" : "Cadastro rejeitado",
+          nextAccess.accessStatus === "active"
+            ? `Seu perfil de ${nextAccess.role} foi aprovado.`
+            : "Sua solicitação de perfil foi rejeitada."
+        );
       }
-
-      updateUserRoleStmt.run(nextRole, userId);
       sendJson(response, 200, { user: mapUser(getUserById.get(userId)) });
       return;
     }
@@ -497,8 +743,6 @@ async function handleApi(request, response, url) {
       JSON.stringify(program.rows)
     );
 
-    writeDefaultProgramTemplate(program);
-
     sendJson(response, 200, { program: mapProgram(getProgramStmt.get(turmaId)) });
     return;
   }
@@ -531,6 +775,8 @@ function initializeDatabase() {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'Dirigente',
+      requested_role TEXT NOT NULL DEFAULT 'Dirigente',
+      access_status TEXT NOT NULL DEFAULT 'active',
       dirigente_nome TEXT,
       secretarios_json TEXT,
       telefone TEXT,
@@ -544,6 +790,45 @@ function initializeDatabase() {
       user_id INTEGER NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS profile_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      requested_role TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      decided_by_user_id INTEGER,
+      decided_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+      FOREIGN KEY (decided_by_user_id) REFERENCES users (id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS turma_members (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      turma_id INTEGER NOT NULL,
+      user_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'Secretário',
+      status TEXT NOT NULL DEFAULT 'active',
+      invited_by_user_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (turma_id) REFERENCES turmas (id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+      FOREIGN KEY (invited_by_user_id) REFERENCES users (id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS turma_invites (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      turma_id INTEGER NOT NULL,
+      invited_user_id INTEGER NOT NULL,
+      invited_by_user_id INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      accepted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (turma_id) REFERENCES turmas (id) ON DELETE CASCADE,
+      FOREIGN KEY (invited_user_id) REFERENCES users (id) ON DELETE CASCADE,
+      FOREIGN KEY (invited_by_user_id) REFERENCES users (id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS turmas (
@@ -585,6 +870,8 @@ function initializeDatabase() {
   `);
 
   ensureColumn("users", "role", "TEXT NOT NULL DEFAULT 'Dirigente'");
+  ensureColumn("users", "requested_role", "TEXT NOT NULL DEFAULT 'Dirigente'");
+  ensureColumn("users", "access_status", "TEXT NOT NULL DEFAULT 'active'");
   ensureColumn("users", "dirigente_nome", "TEXT");
   ensureColumn("users", "secretarios_json", "TEXT");
   ensureColumn("users", "telefone", "TEXT");
@@ -601,6 +888,10 @@ function initializeDatabase() {
   ensureColumn("turmas", "email", "TEXT");
   ensureColumn("turmas", "horarios", "TEXT");
   ensureColumn("turmas", "alunos_json", "TEXT");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_turma_members_unique
+    ON turma_members (turma_id, user_id);
+  `);
   db.exec(`
     UPDATE turmas
     SET status = CASE
@@ -623,6 +914,18 @@ function initializeDatabase() {
     UPDATE users
     SET role = 'Dirigente'
     WHERE role IS NULL OR role = '';
+  `);
+  db.exec(`
+    UPDATE users
+    SET requested_role = CASE
+      WHEN requested_role IS NULL OR requested_role = '' THEN role
+      ELSE requested_role
+    END
+  `);
+  db.exec(`
+    UPDATE users
+    SET access_status = 'active'
+    WHERE access_status IS NULL OR access_status = '';
   `);
   db.exec(`
     UPDATE users
@@ -696,11 +999,11 @@ function ensureDefaultUsers() {
     const passwordHash = hashPassword(user.password);
 
     if (existingUser) {
-      updateSeedUserStmt.run(user.name, passwordHash, user.role, user.email);
+      updateSeedUserStmt.run(user.name, passwordHash, user.role, user.requestedRole, user.email);
       return;
     }
 
-    insertUser.run(user.name, user.email, passwordHash, user.role);
+    insertUser.run(user.name, user.email, passwordHash, user.role, user.requestedRole, "active");
   });
 }
 
@@ -718,8 +1021,16 @@ function listTurmasForSession(session, scope) {
   }
 
   return scope === "archived"
-    ? listArchivedTurmasByOwnerStmt.all(session.id)
-    : listTurmasByOwnerStmt.all(session.id);
+    ? listArchivedTurmasByAccessStmt.all(session.id, session.id)
+    : listTurmasByAccessStmt.all(session.id, session.id);
+}
+
+function listUsersForApproval(session) {
+  if (isAdmin(session)) {
+    return listUsersStmt.all();
+  }
+
+  return listPendingUsersStmt.all();
 }
 
 function getTurmaOrFail(turmaId) {
@@ -734,7 +1045,10 @@ function getTurmaOrFail(turmaId) {
 
 function ensureTurmaAccess(session, turma) {
   if (isAdmin(session)) return;
-  if (turma.user_id !== session.id) {
+  if (turma.user_id === session.id) return;
+  if (getTurmaMemberStmt.get(turma.id, session.id)) return;
+
+  {
     const error = new Error("Você não tem permissão para acessar esta turma.");
     error.statusCode = 403;
     throw error;
@@ -749,8 +1063,104 @@ function requireAdmin(session) {
   }
 }
 
+function requireUserApprovalAccess(session) {
+  if (isAdmin(session)) return;
+  if (isApprovedDirigente(session)) return;
+
+  const error = new Error("Apenas Admin ou Dirigentes aprovados podem gerenciar solicitações.");
+  error.statusCode = 403;
+  throw error;
+}
+
+function requireSecretaryInviteAccess(session) {
+  if (!isActiveAccount(session)) {
+    const error = new Error("Sua conta não está ativa para enviar convites.");
+    error.statusCode = 403;
+    throw error;
+  }
+  if (["Admin", "Dirigente", "Secretário"].includes(session.role)) {
+    return;
+  }
+
+  const error = new Error("Apenas Admin, Dirigente ou Secretário podem convidar para turmas.");
+  error.statusCode = 403;
+  throw error;
+}
+
 function isAdmin(session) {
-  return session.role === "Admin";
+  return session.role === "Admin" && isActiveAccount(session);
+}
+
+function isApprovedDirigente(session) {
+  return session.role === "Dirigente" && isActiveAccount(session);
+}
+
+function isActiveAccount(user) {
+  return (user.access_status || "active") === "active";
+}
+
+function resolveUserAccessUpdate(session, targetUser, body) {
+  const currentRole = normalizeRole(targetUser.role, "Pendente");
+  const currentRequestedRole = normalizeRequestedRole(targetUser.requested_role, "Dirigente");
+  const currentStatus = normalizeAccessStatus(targetUser.access_status, "pending");
+  const action = optionalText(body.action);
+
+  if (!isAdmin(session)) {
+    if (action !== "approve" || currentStatus !== "pending" || currentRequestedRole !== "Dirigente") {
+      const error = new Error("Dirigentes só podem aprovar solicitações pendentes de dirigente.");
+      error.statusCode = 403;
+      throw error;
+    }
+
+    return {
+      role: "Dirigente",
+      requestedRole: "Dirigente",
+      accessStatus: "active",
+    };
+  }
+
+  if (action === "approve") {
+    if (currentRequestedRole === "Secretário") {
+      const error = new Error("Secretários devem ser aprovados por convite de turma.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return {
+      role: currentRequestedRole,
+      requestedRole: currentRequestedRole,
+      accessStatus: "active",
+    };
+  }
+
+  if (action === "reject") {
+    return {
+      role: "Pendente",
+      requestedRole: currentRequestedRole,
+      accessStatus: "rejected",
+    };
+  }
+
+  const nextRole = normalizeRole(body.role, currentRole);
+  const nextStatus = normalizeAccessStatus(body.accessStatus, currentStatus);
+  const nextRequestedRole = REQUESTED_ROLES.has(nextRole) ? nextRole : currentRequestedRole;
+  const adminUsers = listUsersStmt.all().filter((user) => normalizeRole(user.role, "Dirigente") === "Admin" && isActiveAccount(user));
+  const isRemovingLastAdmin =
+    currentRole === "Admin" &&
+    (nextRole !== "Admin" || nextStatus !== "active") &&
+    adminUsers.length <= 1;
+
+  if (isRemovingLastAdmin) {
+    const error = new Error("É preciso manter ao menos um usuário Admin ativo.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return {
+    role: nextStatus === "active" ? nextRole : "Pendente",
+    requestedRole: nextRequestedRole,
+    accessStatus: nextStatus,
+  };
 }
 
 function serveStatic(pathname, response) {
@@ -919,16 +1329,6 @@ function sanitizeProgram(body) {
   };
 }
 
-function writeDefaultProgramTemplate(program) {
-  const serialized = `window.DEFAULT_PROGRAM_TEMPLATE = ${JSON.stringify({
-    meta: program.meta,
-    headers: program.headers,
-    rows: program.rows,
-  })};\n`;
-
-  fs.writeFileSync(DEFAULT_PROGRAM_TEMPLATE_PATH, serialized, "utf8");
-}
-
 function normalizeRow(row, length) {
   const values = Array.isArray(row) ? row : [];
   const normalized = values.map((item) => String(item ?? ""));
@@ -939,17 +1339,66 @@ function normalizeRow(row, length) {
 }
 
 function mapUser(row) {
+  const accessStatus = normalizeAccessStatus(row.access_status, "active");
+  const role = accessStatus === "active"
+    ? normalizeRole(row.role, "Dirigente")
+    : "Pendente";
   return {
     id: row.id,
     name: row.name,
     email: row.email,
-    role: normalizeRole(row.role, "Dirigente"),
+    role,
+    requestedRole: normalizeRequestedRole(row.requested_role || row.role, "Dirigente"),
+    accessStatus,
     dirigenteNome: row.dirigente_nome || "",
     secretarios: parseSecretarios(row.secretarios_json),
     telefone: row.telefone || "",
     whatsapp: row.whatsapp || "",
     contatoEmail: row.contato_email || "",
   };
+}
+
+function mapAccessEvent(row) {
+  return {
+    id: row.id,
+    type: "profile_request",
+    userId: row.user_id,
+    userName: row.user_name,
+    userEmail: row.user_email,
+    requestedRole: normalizeRequestedRole(row.requested_role, "Dirigente"),
+    status: normalizeAccessStatus(row.status, "pending"),
+    decidedByName: row.decided_by_name || "",
+    decidedByEmail: row.decided_by_email || "",
+    invitedByName: "",
+    invitedByEmail: "",
+    createdAt: row.created_at,
+    decidedAt: row.decided_at || "",
+  };
+}
+
+function mapInviteEvent(row) {
+  return {
+    id: row.id,
+    type: "turma_invite",
+    title: `${row.invited_user_name} foi convidado para ${row.turma_nome}`,
+    turmaId: row.turma_id,
+    turmaName: row.turma_nome,
+    userId: row.invited_user_id,
+    userName: row.invited_user_name,
+    userEmail: row.invited_user_email,
+    requestedRole: "Secretário",
+    status: row.status || "accepted",
+    decidedByName: row.invited_by_name,
+    decidedByEmail: row.invited_by_email,
+    invitedByName: row.invited_by_name,
+    invitedByEmail: row.invited_by_email,
+    createdAt: row.created_at,
+    decidedAt: row.accepted_at || "",
+  };
+}
+
+function compareAccessEvents(a, b) {
+  return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
 }
 
 function mapTurma(row) {
@@ -1063,6 +1512,28 @@ function normalizeEmail(value) {
 function normalizeRole(value, fallback) {
   const candidate = String(value || "").trim();
   return ROLES.has(candidate) ? candidate : fallback;
+}
+
+function normalizeRequestedRole(value, fallback) {
+  const candidate = normalizeSecretaryRoleLabel(value);
+  return REQUESTED_ROLES.has(candidate) ? candidate : fallback;
+}
+
+function normalizeAccessStatus(value, fallback) {
+  const candidate = String(value || "").trim();
+  return ACCESS_STATUSES.has(candidate) ? candidate : fallback;
+}
+
+function normalizeSecretaryRoleLabel(value) {
+  const candidate = String(value || "").trim();
+  if (candidate === "Secretario") {
+    return "Secretário";
+  }
+  return candidate;
+}
+
+function logEmailNotification(to, subject, message) {
+  console.log(`[email pendente] Para: ${to} | Assunto: ${subject} | Mensagem: ${message}`);
 }
 
 function normalizeOptionalId(value) {
