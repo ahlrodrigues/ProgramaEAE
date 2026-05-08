@@ -4,6 +4,8 @@ const state = {
   accessEvents: [],
   pendingInvites: [],
   pendingInviteLocks: {},
+  linkRequests: [],
+  dirigenteTurmaCatalog: [],
   turmas: [],
   activeTurmasForCopy: [],
   currentTurmaId: null,
@@ -31,6 +33,8 @@ const adminUsersSection = document.querySelector("#admin-users-section");
 const adminUsersList = document.querySelector("#admin-users-list");
 const accessHistoryList = document.querySelector("#access-history-list");
 const accessHistorySection = document.querySelector("#access-history-section");
+const linkRequestsSection = document.querySelector("#link-requests-section");
+const linkRequestsList = document.querySelector("#link-requests-list");
 const approvalsPanelTitle = document.querySelector("#approvals-panel-title");
 const approvalsPanelDescription = document.querySelector("#approvals-panel-description");
 const adminUsersEyebrow = document.querySelector("#admin-users-eyebrow");
@@ -44,6 +48,12 @@ const turmaSummary = document.querySelector("#turma-summary");
 const turmaList = document.querySelector("#turma-list");
 const authNotice = document.querySelector("#auth-notice");
 const pendingInvites = document.querySelector("#pending-invites");
+const linkRequestPanel = document.querySelector("#link-request-panel");
+const linkRequestForm = document.querySelector("#link-request-form");
+const linkRequestDirigente = document.querySelector("#link-request-dirigente");
+const linkRequestTurma = document.querySelector("#link-request-turma");
+const linkRequestSummary = document.querySelector("#link-request-summary");
+const myLinkRequestsList = document.querySelector("#my-link-requests-list");
 const logoutButton = document.querySelector("#logout-button");
 const newTurmaButton = document.querySelector("#new-turma-button");
 const scopeButtons = Array.from(document.querySelectorAll("[data-scope-button]"));
@@ -580,6 +590,52 @@ function setupForms() {
       showToast("error", "Erro ao aceitar convite", error.message);
     }
   });
+
+  linkRequestForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.session) return;
+
+    const payload = {
+      dirigenteUserId: linkRequestDirigente?.value,
+      turmaId: linkRequestTurma?.value,
+    };
+
+    try {
+      await apiRequest("/api/turma-link-requests", {
+        method: "POST",
+        body: payload,
+      });
+      linkRequestSummary.textContent = "Solicitação enviada. Aguarde aprovação do dirigente.";
+      showToast("success", "Solicitação enviada", "O dirigente recebeu sua solicitação de vínculo.");
+      await loadPendingAccessStateData();
+      renderPendingAccessTools();
+    } catch (error) {
+      linkRequestSummary.textContent = error.message;
+      showToast("error", "Erro ao solicitar vínculo", error.message);
+    }
+  });
+
+  linkRequestDirigente?.addEventListener("change", () => {
+    renderLinkRequestTurmaOptions(linkRequestDirigente.value);
+  });
+
+  linkRequestsList?.addEventListener("click", async (event) => {
+    const approveButton = event.target.closest("[data-link-request-approve]");
+    const rejectButton = event.target.closest("[data-link-request-reject]");
+    if (!approveButton && !rejectButton) return;
+
+    const requestId = approveButton?.dataset.linkRequestApprove || rejectButton?.dataset.linkRequestReject;
+    const action = approveButton ? "approve" : "reject";
+    try {
+      await apiRequest(`/api/turma-link-requests/${requestId}/${action}`, { method: "POST" });
+      showToast("success", action === "approve" ? "Solicitação aprovada" : "Solicitação rejeitada",
+        action === "approve" ? "O secretário já pode acessar a turma." : "Solicitação de vínculo rejeitada.");
+      await loadReferenceData();
+      renderLinkRequestsForDirigente();
+    } catch (error) {
+      showToast("error", "Erro ao decidir solicitação", error.message);
+    }
+  });
 }
 
 function setupProgramActions() {
@@ -656,12 +712,14 @@ function setupProgramActions() {
 async function loadReferenceData() {
   state.users = [];
   state.accessEvents = [];
+  state.linkRequests = [];
   state.activeTurmasForCopy = [];
-  await loadPendingInvites();
-  renderPendingInvites();
   if (!hasAppAccess()) {
+    await loadPendingAccessStateData();
+    renderPendingAccessTools();
     renderAdminUserManagement();
     renderAccessHistory();
+    renderLinkRequestsForDirigente();
     renderCopyProgramField();
     return;
   }
@@ -676,6 +734,7 @@ async function loadReferenceData() {
       state.activeTurmasForCopy = copySourcesResponse.turmas;
       renderAdminUserManagement();
       renderAccessHistory();
+      renderLinkRequestsForDirigente();
       return;
     }
     renderAdminUserManagement();
@@ -684,16 +743,19 @@ async function loadReferenceData() {
     return;
   }
 
-  const [usersResponse, accessEventsResponse, copySourcesResponse] = await Promise.all([
+  const [usersResponse, accessEventsResponse, copySourcesResponse, linkRequestsResponse] = await Promise.all([
     apiRequest("/api/users"),
     apiRequest("/api/access-events"),
     apiRequest("/api/turmas?scope=active"),
+    apiRequest("/api/turma-link-requests"),
   ]);
   state.users = usersResponse.users;
   state.accessEvents = accessEventsResponse.events;
   state.activeTurmasForCopy = copySourcesResponse.turmas;
+  state.linkRequests = linkRequestsResponse.requests || [];
   renderAdminUserManagement();
   renderAccessHistory();
+  renderLinkRequestsForDirigente();
 }
 
 async function loadCopySourceTurmas() {
@@ -1181,6 +1243,58 @@ function renderAccessHistory() {
   });
 }
 
+function renderLinkRequestsForDirigente() {
+  if (!linkRequestsSection || !linkRequestsList) {
+    return;
+  }
+
+  const visible = canManageUserApprovals();
+  linkRequestsSection.hidden = !visible;
+  linkRequestsList.replaceChildren();
+  if (!visible) {
+    return;
+  }
+
+  if (!state.linkRequests.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "Nenhuma solicitação de vínculo pendente.";
+    empty.className = "list-empty";
+    linkRequestsList.appendChild(empty);
+    return;
+  }
+
+  state.linkRequests.forEach((request) => {
+    const item = document.createElement("div");
+    item.className = "admin-user-item";
+
+    const meta = document.createElement("div");
+    meta.className = "admin-user-meta";
+    const title = document.createElement("strong");
+    title.textContent = `${request.requesterName} solicitou vínculo na turma ${request.turmaName}`;
+    const details = document.createElement("span");
+    details.textContent = `${request.requesterEmail} - ${request.turmaTipo || "Sem tipo"} - ${formatDateTime(request.createdAt)}`;
+    meta.appendChild(title);
+    meta.appendChild(details);
+
+    const approveButton = document.createElement("button");
+    approveButton.type = "button";
+    approveButton.className = "ghost-action";
+    approveButton.dataset.linkRequestApprove = String(request.id);
+    approveButton.textContent = "Aprovar vínculo";
+
+    const rejectButton = document.createElement("button");
+    rejectButton.type = "button";
+    rejectButton.className = "ghost-action";
+    rejectButton.dataset.linkRequestReject = String(request.id);
+    rejectButton.textContent = "Rejeitar";
+
+    item.appendChild(meta);
+    item.appendChild(approveButton);
+    item.appendChild(rejectButton);
+    linkRequestsList.appendChild(item);
+  });
+}
+
 function formatAccessEventStatus(status) {
   const labels = {
     pending: "Pendente",
@@ -1204,6 +1318,32 @@ async function loadPendingInvites() {
   } catch (error) {
     state.pendingInvites = [];
   }
+}
+
+async function loadPendingAccessStateData() {
+  await loadPendingInvites();
+  if (!canRequestSecretaryLink()) {
+    state.dirigenteTurmaCatalog = [];
+    state.linkRequests = [];
+    return;
+  }
+
+  const [catalogResponse, myRequestsResponse] = await Promise.all([
+    apiRequest("/api/dirigentes-active-turmas"),
+    apiRequest("/api/my-link-requests"),
+  ]);
+  state.dirigenteTurmaCatalog = catalogResponse.dirigentes || [];
+  state.linkRequests = myRequestsResponse.requests || [];
+}
+
+function canRequestSecretaryLink() {
+  if (!state.session) return false;
+  const requestedRole = state.session.requestedRole || state.session.role;
+  return normalizeSecretaryRole(requestedRole) === "Secretário" && !hasAppAccess();
+}
+
+function normalizeSecretaryRole(value) {
+  return String(value || "").trim() === "Secretario" ? "Secretário" : String(value || "").trim();
 }
 
 function renderPendingInvites() {
@@ -1243,6 +1383,97 @@ function renderPendingInvites() {
     item.appendChild(meta);
     item.appendChild(acceptButton);
     pendingInvites.appendChild(item);
+  });
+}
+
+function renderPendingAccessTools() {
+  renderPendingInvites();
+  renderLinkRequestPanel();
+}
+
+function renderLinkRequestPanel() {
+  if (!linkRequestPanel || !linkRequestDirigente || !linkRequestTurma || !myLinkRequestsList) {
+    return;
+  }
+
+  const visible = canRequestSecretaryLink();
+  linkRequestPanel.hidden = !visible;
+  if (!visible) {
+    return;
+  }
+
+  linkRequestSummary.textContent = state.linkRequests.some((item) => item.status === "pending")
+    ? "Você já possui solicitação(ões) pendente(s). Aguarde a resposta do dirigente."
+    : "Selecione o dirigente e a turma ativa para solicitar seu vínculo.";
+
+  linkRequestDirigente.replaceChildren();
+  renderMyLinkRequests();
+  if (!state.dirigenteTurmaCatalog.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Nenhum dirigente com turma ativa disponível";
+    linkRequestDirigente.appendChild(option);
+    linkRequestTurma.replaceChildren();
+    return;
+  }
+
+  state.dirigenteTurmaCatalog.forEach((dirigente, index) => {
+    const option = document.createElement("option");
+    option.value = String(dirigente.id);
+    option.textContent = `${dirigente.name} (${dirigente.email})`;
+    option.selected = index === 0;
+    linkRequestDirigente.appendChild(option);
+  });
+
+  renderLinkRequestTurmaOptions(linkRequestDirigente.value);
+}
+
+function renderLinkRequestTurmaOptions(dirigenteId) {
+  if (!linkRequestTurma) return;
+  linkRequestTurma.replaceChildren();
+  const dirigente = state.dirigenteTurmaCatalog.find((item) => String(item.id) === String(dirigenteId));
+  const turmas = dirigente?.turmas || [];
+  if (!turmas.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "Nenhuma turma ativa para este dirigente";
+    linkRequestTurma.appendChild(option);
+    return;
+  }
+
+  turmas.forEach((turma, index) => {
+    const option = document.createElement("option");
+    option.value = String(turma.id);
+    option.textContent = `${turma.nome} · ${turma.tipo || "Sem tipo"}${turma.inicio ? ` · ${turma.inicio}` : ""}`;
+    option.selected = index === 0;
+    linkRequestTurma.appendChild(option);
+  });
+}
+
+function renderMyLinkRequests() {
+  if (!myLinkRequestsList) return;
+  myLinkRequestsList.replaceChildren();
+
+  if (!state.linkRequests.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "Nenhuma solicitação enviada ainda.";
+    myLinkRequestsList.appendChild(empty);
+    return;
+  }
+
+  state.linkRequests.forEach((request) => {
+    const item = document.createElement("div");
+    item.className = "admin-user-item";
+    const meta = document.createElement("div");
+    meta.className = "admin-user-meta";
+    const title = document.createElement("strong");
+    title.textContent = `${request.turmaName || "Turma"} · ${request.turmaTipo || "Sem tipo"}`;
+    const details = document.createElement("span");
+    details.textContent = `Dirigente: ${request.dirigenteName} (${request.dirigenteEmail}) - Status: ${formatAccessEventStatus(request.status)}`;
+    meta.appendChild(title);
+    meta.appendChild(details);
+    item.appendChild(meta);
+    myLinkRequestsList.appendChild(item);
   });
 }
 
@@ -1970,6 +2201,8 @@ function renderLoggedOutState(message = "Entre ou crie uma conta para começar."
   state.users = [];
   state.accessEvents = [];
   state.pendingInvites = [];
+  state.linkRequests = [];
+  state.dirigenteTurmaCatalog = [];
   state.turmas = [];
   state.activeTurmasForCopy = [];
   state.currentTurmaId = null;
@@ -1984,7 +2217,7 @@ function renderLoggedOutState(message = "Entre ou crie uma conta para começar."
   registerForm.reset();
   renderSession();
   authNotice.textContent = message;
-  renderPendingInvites();
+  renderPendingAccessTools();
   renderScopeButtons();
   renderOwnerField();
   renderCopyProgramField();
@@ -2107,6 +2340,7 @@ function renderSession() {
   updateAccessControlledTabs();
   renderApprovalsPanelCopy();
   renderAdminUserManagement();
+  renderLinkRequestsForDirigente();
 }
 
 function getApprovalActionFeedback(button, response) {
@@ -2195,6 +2429,8 @@ async function renderPendingAccessState() {
   state.users = [];
   state.accessEvents = [];
   state.pendingInvites = [];
+  state.linkRequests = [];
+  state.dirigenteTurmaCatalog = [];
   state.turmas = [];
   state.activeTurmasForCopy = [];
   state.currentTurmaId = null;
@@ -2211,8 +2447,8 @@ async function renderPendingAccessState() {
   authNotice.textContent = state.session?.accessStatus === "rejected"
     ? "Sua solicitação de perfil foi rejeitada. Entre em contato com a coordenação."
     : `Sua solicitação de ${state.session?.requestedRole || "perfil"} está aguardando aprovação.`;
-  await loadPendingInvites();
-  renderPendingInvites();
+  await loadPendingAccessStateData();
+  renderPendingAccessTools();
 }
 
 function updateAccessControlledTabs() {

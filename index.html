@@ -136,6 +136,24 @@
             Entre ou crie uma conta para começar.
           </div>
           <div class="saved-summary pending-invites" id="pending-invites" hidden></div>
+          <div class="saved-summary pending-invites" id="link-request-panel" hidden>
+            <h4>Solicitar vínculo com turma</h4>
+            <form id="link-request-form" class="card-grid two-columns">
+              <label>
+                <span>Dirigente</span>
+                <select id="link-request-dirigente" name="dirigenteUserId"></select>
+              </label>
+              <label>
+                <span>Turma ativa</span>
+                <select id="link-request-turma" name="turmaId"></select>
+              </label>
+              <div class="inline-actions form-inline-actions">
+                <button type="submit" class="primary-action">Solicitar vínculo</button>
+              </div>
+            </form>
+            <div id="link-request-summary" class="saved-summary"></div>
+            <div id="my-link-requests-list" class="admin-users-list"></div>
+          </div>
         </section>
 
         <section class="panel" data-tab-panel="cadastro">
@@ -204,6 +222,17 @@
               <p>Mostra quem aprovou cada perfil; convites de turma entrarão aqui na próxima etapa.</p>
             </div>
             <div id="access-history-list" class="admin-users-list"></div>
+          </section>
+
+          <section id="link-requests-section" class="saved-summary admin-users-section">
+            <div class="section-head section-head-compact">
+              <div>
+                <span class="eyebrow">Solicitações</span>
+                <h4>Solicitações de vínculo de secretário</h4>
+              </div>
+              <p>Aprove ou rejeite solicitações de secretários para turmas ativas sob sua responsabilidade.</p>
+            </div>
+            <div id="link-requests-list" class="admin-users-list"></div>
           </section>
         </section>
 

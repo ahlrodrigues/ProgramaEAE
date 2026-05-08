@@ -89,7 +89,14 @@ const listPendingUsersStmt = db.prepare(`
 const listPendingSecretaryUsersStmt = db.prepare(`
   SELECT id, name, email, role, requested_role, access_status, dirigente_nome, secretarios_json, telefone, whatsapp, contato_email
   FROM users
-  WHERE access_status = 'pending' AND requested_role = 'Secretário'
+  WHERE access_status = 'pending'
+    AND requested_role = 'Secretário'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM turma_members
+      WHERE turma_members.user_id = users.id
+        AND turma_members.status = 'active'
+    )
   ORDER BY created_at, name COLLATE NOCASE
 `);
 
@@ -154,6 +161,110 @@ const listMyPendingInvitesStmt = db.prepare(`
   ORDER BY turma_invites.created_at DESC
 `);
 
+const listDirigentesWithActiveTurmasStmt = db.prepare(`
+  SELECT
+    users.id AS dirigente_id,
+    users.name AS dirigente_name,
+    users.email AS dirigente_email,
+    turmas.id AS turma_id,
+    turmas.nome AS turma_nome,
+    turmas.tipo AS turma_tipo,
+    turmas.modalidade AS turma_modalidade,
+    turmas.inicio AS turma_inicio
+  FROM users
+  JOIN turmas ON turmas.user_id = users.id
+  WHERE users.role = 'Dirigente'
+    AND users.access_status = 'active'
+    AND turmas.archived_at IS NULL
+  ORDER BY users.name COLLATE NOCASE, turmas.nome COLLATE NOCASE
+`);
+
+const insertTurmaLinkRequestStmt = db.prepare(`
+  INSERT INTO turma_link_requests (requester_user_id, dirigente_user_id, turma_id, status)
+  VALUES (?, ?, ?, 'pending')
+`);
+
+const getPendingTurmaLinkRequestByRequesterAndTurmaStmt = db.prepare(`
+  SELECT id
+  FROM turma_link_requests
+  WHERE requester_user_id = ? AND turma_id = ? AND status = 'pending'
+`);
+
+const getTurmaLinkRequestByIdStmt = db.prepare(`
+  SELECT id, requester_user_id, dirigente_user_id, turma_id, status
+  FROM turma_link_requests
+  WHERE id = ?
+`);
+
+const updateTurmaLinkRequestStatusStmt = db.prepare(`
+  UPDATE turma_link_requests
+  SET status = ?, decided_by_user_id = ?, decided_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
+const listMyTurmaLinkRequestsStmt = db.prepare(`
+  SELECT
+    turma_link_requests.id,
+    turma_link_requests.status,
+    turma_link_requests.created_at,
+    turma_link_requests.decided_at,
+    turma_link_requests.turma_id,
+    turmas.nome AS turma_nome,
+    turmas.tipo AS turma_tipo,
+    dirigentes.name AS dirigente_name,
+    dirigentes.email AS dirigente_email,
+    decider.name AS decided_by_name
+  FROM turma_link_requests
+  JOIN turmas ON turmas.id = turma_link_requests.turma_id
+  JOIN users AS dirigentes ON dirigentes.id = turma_link_requests.dirigente_user_id
+  LEFT JOIN users AS decider ON decider.id = turma_link_requests.decided_by_user_id
+  WHERE turma_link_requests.requester_user_id = ?
+  ORDER BY turma_link_requests.created_at DESC
+`);
+
+const listReceivedTurmaLinkRequestsStmt = db.prepare(`
+  SELECT
+    turma_link_requests.id,
+    turma_link_requests.status,
+    turma_link_requests.created_at,
+    turma_link_requests.decided_at,
+    turma_link_requests.turma_id,
+    turmas.nome AS turma_nome,
+    turmas.tipo AS turma_tipo,
+    requester.id AS requester_user_id,
+    requester.name AS requester_name,
+    requester.email AS requester_email,
+    requester.requested_role AS requester_requested_role
+  FROM turma_link_requests
+  JOIN turmas ON turmas.id = turma_link_requests.turma_id
+  JOIN users AS requester ON requester.id = turma_link_requests.requester_user_id
+  WHERE turma_link_requests.status = 'pending'
+    AND turmas.archived_at IS NULL
+    AND (turmas.user_id = ?)
+  ORDER BY turma_link_requests.created_at DESC
+`);
+
+const listReceivedTurmaLinkRequestsForAdminStmt = db.prepare(`
+  SELECT
+    turma_link_requests.id,
+    turma_link_requests.status,
+    turma_link_requests.created_at,
+    turma_link_requests.decided_at,
+    turma_link_requests.turma_id,
+    turmas.nome AS turma_nome,
+    turmas.tipo AS turma_tipo,
+    requester.id AS requester_user_id,
+    requester.name AS requester_name,
+    requester.email AS requester_email,
+    requester.requested_role AS requester_requested_role
+  FROM turma_link_requests
+  JOIN turmas ON turmas.id = turma_link_requests.turma_id
+  JOIN users AS requester ON requester.id = turma_link_requests.requester_user_id
+  WHERE turma_link_requests.status = 'pending'
+    AND turmas.archived_at IS NULL
+  ORDER BY turma_link_requests.created_at DESC
+`);
+
 const updateUserProfileStmt = db.prepare(`
   UPDATE users
   SET dirigente_nome = ?, secretarios_json = ?, telefone = ?, whatsapp = ?, contato_email = ?
@@ -176,6 +287,11 @@ const updateLatestProfileRequestStmt = db.prepare(`
     ORDER BY created_at DESC
     LIMIT 1
   )
+`);
+
+const insertProfileRequestDecisionStmt = db.prepare(`
+  INSERT INTO profile_requests (user_id, requested_role, status, decided_by_user_id, decided_at)
+  VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 `);
 
 const listTurmasStmt = db.prepare(`
@@ -473,6 +589,64 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/dirigentes-active-turmas") {
+    const grouped = groupDirigentesWithTurmas(listDirigentesWithActiveTurmasStmt.all());
+    sendJson(response, 200, { dirigentes: grouped });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/my-link-requests") {
+    sendJson(response, 200, { requests: listMyTurmaLinkRequestsStmt.all(session.id).map(mapTurmaLinkRequest) });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/turma-link-requests") {
+    const body = await readJsonBody(request);
+    if (normalizeRequestedRole(session.requested_role || session.role, "Dirigente") !== "Secretário") {
+      sendJson(response, 403, { error: "Apenas usuários com solicitação de Secretário podem solicitar vínculo." });
+      return;
+    }
+
+    const dirigenteUserId = normalizeOptionalId(body.dirigenteUserId);
+    const turmaId = normalizeOptionalId(body.turmaId);
+    const turma = getTurmaOrFail(turmaId);
+
+    if (!dirigenteUserId || turma.user_id !== dirigenteUserId) {
+      sendJson(response, 400, { error: "Selecione um dirigente e uma turma ativa correspondentes." });
+      return;
+    }
+
+    const dirigente = getUserById.get(dirigenteUserId);
+    if (!dirigente || normalizeRole(dirigente.role, "Pendente") !== "Dirigente" || !isActiveAccount(dirigente)) {
+      sendJson(response, 400, { error: "Dirigente inválido para esta solicitação." });
+      return;
+    }
+
+    if (turma.archived_at) {
+      sendJson(response, 400, { error: "A turma selecionada não está ativa." });
+      return;
+    }
+
+    if (getPendingTurmaLinkRequestByRequesterAndTurmaStmt.get(session.id, turmaId)) {
+      sendJson(response, 409, { error: "Você já possui uma solicitação pendente para esta turma." });
+      return;
+    }
+
+    if (getTurmaMemberStmt.get(turmaId, session.id)) {
+      sendJson(response, 409, { error: "Você já participa desta turma." });
+      return;
+    }
+
+    insertTurmaLinkRequestStmt.run(session.id, dirigenteUserId, turmaId);
+    logEmailNotification(
+      dirigente.email,
+      "Solicitação de vínculo de secretário",
+      `${session.name} (${session.email}) solicitou vínculo na turma ${turma.nome}.`
+    );
+    sendJson(response, 201, { success: true });
+    return;
+  }
+
   const acceptInviteMatch = url.pathname.match(/^\/api\/turma-invites\/(\d+)\/accept$/);
   if (acceptInviteMatch && request.method === "POST") {
     const invite = getTurmaInviteStmt.get(Number(acceptInviteMatch[1]));
@@ -484,8 +658,54 @@ async function handleApi(request, response, url) {
     acceptTurmaInviteStmt.run(invite.id);
     upsertTurmaMemberStmt.run(invite.turma_id, session.id, "Secretário", invite.invited_by_user_id);
     updateUserRoleStmt.run("Secretário", "Secretário", "active", session.id);
-    updateLatestProfileRequestStmt.run("active", invite.invited_by_user_id, session.id);
+    const inviteDecision = updateLatestProfileRequestStmt.run("active", invite.invited_by_user_id, session.id);
+    if (!inviteDecision.changes) {
+      insertProfileRequestDecisionStmt.run(session.id, "Secretário", "active", invite.invited_by_user_id);
+    }
     sendJson(response, 200, { user: mapUser(getUserById.get(session.id)) });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/turma-link-requests") {
+    requireUserApprovalAccess(session);
+    const requests = isAdmin(session)
+      ? listReceivedTurmaLinkRequestsForAdminStmt.all()
+      : listReceivedTurmaLinkRequestsStmt.all(session.id);
+    sendJson(response, 200, { requests: requests.map(mapTurmaLinkRequestForDirigente) });
+    return;
+  }
+
+  const resolveLinkRequestMatch = url.pathname.match(/^\/api\/turma-link-requests\/(\d+)\/(approve|reject)$/);
+  if (resolveLinkRequestMatch && request.method === "POST") {
+    requireUserApprovalAccess(session);
+    const requestId = Number(resolveLinkRequestMatch[1]);
+    const action = resolveLinkRequestMatch[2];
+    const linkRequest = getTurmaLinkRequestByIdStmt.get(requestId);
+
+    if (!linkRequest || linkRequest.status !== "pending") {
+      sendJson(response, 404, { error: "Solicitação pendente não encontrada." });
+      return;
+    }
+
+    const turma = getTurmaOrFail(linkRequest.turma_id);
+    if (!isAdmin(session) && turma.user_id !== session.id) {
+      sendJson(response, 403, { error: "Você não pode decidir esta solicitação." });
+      return;
+    }
+
+    if (action === "approve") {
+      upsertTurmaMemberStmt.run(turma.id, linkRequest.requester_user_id, "Secretário", session.id);
+      updateUserRoleStmt.run("Secretário", "Secretário", "active", linkRequest.requester_user_id);
+      const decision = updateLatestProfileRequestStmt.run("active", session.id, linkRequest.requester_user_id);
+      if (!decision.changes) {
+        insertProfileRequestDecisionStmt.run(linkRequest.requester_user_id, "Secretário", "active", session.id);
+      }
+      updateTurmaLinkRequestStatusStmt.run("approved", session.id, requestId);
+    } else {
+      updateTurmaLinkRequestStatusStmt.run("rejected", session.id, requestId);
+    }
+
+    sendJson(response, 200, { success: true });
     return;
   }
 
@@ -583,7 +803,15 @@ async function handleApi(request, response, url) {
       const nextAccess = resolveUserAccessUpdate(session, targetUser, body);
       updateUserRoleStmt.run(nextAccess.role, nextAccess.requestedRole, nextAccess.accessStatus, userId);
       if (targetUser.access_status === "pending" && nextAccess.accessStatus !== "pending") {
-        updateLatestProfileRequestStmt.run(nextAccess.accessStatus, session.id, userId);
+        const decisionResult = updateLatestProfileRequestStmt.run(nextAccess.accessStatus, session.id, userId);
+        if (!decisionResult.changes) {
+          insertProfileRequestDecisionStmt.run(
+            userId,
+            nextAccess.requestedRole,
+            nextAccess.accessStatus,
+            session.id
+          );
+        }
         logEmailNotification(
           targetUser.email,
           nextAccess.accessStatus === "active" ? "Cadastro aprovado" : "Cadastro rejeitado",
@@ -831,6 +1059,21 @@ function initializeDatabase() {
       FOREIGN KEY (invited_by_user_id) REFERENCES users (id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS turma_link_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      requester_user_id INTEGER NOT NULL,
+      dirigente_user_id INTEGER NOT NULL,
+      turma_id INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      decided_by_user_id INTEGER,
+      decided_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (requester_user_id) REFERENCES users (id) ON DELETE CASCADE,
+      FOREIGN KEY (dirigente_user_id) REFERENCES users (id) ON DELETE CASCADE,
+      FOREIGN KEY (turma_id) REFERENCES turmas (id) ON DELETE CASCADE,
+      FOREIGN KEY (decided_by_user_id) REFERENCES users (id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS turmas (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
@@ -893,6 +1136,10 @@ function initializeDatabase() {
     ON turma_members (turma_id, user_id);
   `);
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_turma_link_requests_requester
+    ON turma_link_requests (requester_user_id, status, turma_id);
+  `);
+  db.exec(`
     UPDATE turmas
     SET status = CASE
       WHEN archived_at IS NOT NULL THEN 'arquivado'
@@ -926,6 +1173,18 @@ function initializeDatabase() {
     UPDATE users
     SET access_status = 'active'
     WHERE access_status IS NULL OR access_status = '';
+  `);
+  db.exec(`
+    UPDATE users
+    SET role = 'Secretário',
+        requested_role = 'Secretário',
+        access_status = 'active'
+    WHERE EXISTS (
+      SELECT 1
+      FROM turma_members
+      WHERE turma_members.user_id = users.id
+        AND turma_members.status = 'active'
+    );
   `);
   db.exec(`
     UPDATE users
@@ -1395,6 +1654,60 @@ function mapInviteEvent(row) {
     createdAt: row.created_at,
     decidedAt: row.accepted_at || "",
   };
+}
+
+function mapTurmaLinkRequest(row) {
+  return {
+    id: row.id,
+    status: row.status,
+    createdAt: row.created_at,
+    decidedAt: row.decided_at || "",
+    turmaId: row.turma_id,
+    turmaName: row.turma_nome,
+    turmaTipo: row.turma_tipo,
+    dirigenteName: row.dirigente_name,
+    dirigenteEmail: row.dirigente_email,
+    decidedByName: row.decided_by_name || "",
+  };
+}
+
+function mapTurmaLinkRequestForDirigente(row) {
+  return {
+    id: row.id,
+    status: row.status,
+    createdAt: row.created_at,
+    decidedAt: row.decided_at || "",
+    turmaId: row.turma_id,
+    turmaName: row.turma_nome,
+    turmaTipo: row.turma_tipo,
+    requesterUserId: row.requester_user_id,
+    requesterName: row.requester_name,
+    requesterEmail: row.requester_email,
+    requesterRequestedRole: row.requester_requested_role,
+  };
+}
+
+function groupDirigentesWithTurmas(rows) {
+  const byDirigente = new Map();
+  rows.forEach((row) => {
+    if (!byDirigente.has(row.dirigente_id)) {
+      byDirigente.set(row.dirigente_id, {
+        id: row.dirigente_id,
+        name: row.dirigente_name,
+        email: row.dirigente_email,
+        turmas: [],
+      });
+    }
+    byDirigente.get(row.dirigente_id).turmas.push({
+      id: row.turma_id,
+      nome: row.turma_nome,
+      tipo: row.turma_tipo,
+      modalidade: row.turma_modalidade,
+      inicio: row.turma_inicio,
+    });
+  });
+
+  return Array.from(byDirigente.values());
 }
 
 function compareAccessEvents(a, b) {
