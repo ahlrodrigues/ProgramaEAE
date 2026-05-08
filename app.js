@@ -528,9 +528,17 @@ function setupForms() {
       }
       await loadReferenceData();
       renderAdminUserManagement();
-      showToast("success", "Usuário atualizado", `Perfil de ${response.user.name} salvo com sucesso.`);
+      const actionFeedback = getApprovalActionFeedback(button, response);
+      showToast("success", actionFeedback.title, actionFeedback.message);
     } catch (error) {
-      showToast("error", "Erro ao atualizar usuário", error.message);
+      const errorTitle = button.dataset.userInvite
+        ? "Erro ao enviar convite"
+        : button.dataset.userApprove
+          ? "Erro ao aprovar perfil"
+          : button.dataset.userReject
+            ? "Erro ao rejeitar perfil"
+            : "Erro ao atualizar usuário";
+      showToast("error", errorTitle, error.message);
     }
   });
 
@@ -2055,6 +2063,33 @@ function renderSession() {
   updateAccessControlledTabs();
   renderApprovalsPanelCopy();
   renderAdminUserManagement();
+}
+
+function getApprovalActionFeedback(button, response) {
+  const userName = response?.user?.name || "Usuário";
+  if (button.dataset.userInvite) {
+    const turmaName = response?.turma?.nome || "a turma selecionada";
+    return {
+      title: "Convite enviado",
+      message: `${userName} foi convidado para ${turmaName}.`,
+    };
+  }
+  if (button.dataset.userApprove) {
+    return {
+      title: "Perfil aprovado",
+      message: `${userName} foi aprovado com sucesso.`,
+    };
+  }
+  if (button.dataset.userReject) {
+    return {
+      title: "Perfil rejeitado",
+      message: `${userName} foi marcado como rejeitado.`,
+    };
+  }
+  return {
+    title: "Perfil atualizado",
+    message: `Perfil de ${userName} salvo com sucesso.`,
+  };
 }
 
 function renderApprovalsPanelCopy() {
