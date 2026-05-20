@@ -1439,7 +1439,7 @@ function formatAccessEventStatus(status) {
 }
 
 async function loadPendingInvites() {
-  if (!state.session || state.session.requestedRole !== "Secretário") {
+  if (!state.session || !hasAppAccess()) {
     state.pendingInvites = [];
     return;
   }
@@ -1470,8 +1470,9 @@ async function loadPendingAccessStateData() {
 
 function canRequestSecretaryLink() {
   if (!state.session) return false;
-  const requestedRole = state.session.requestedRole || state.session.role;
-  return normalizeSecretaryRole(requestedRole) === "Secretário" && !hasAppAccess();
+  if (!hasAppAccess()) return false;
+  const role = normalizeSecretaryRole(state.session.role);
+  return role !== "Admin" && role !== "Dirigente";
 }
 
 function normalizeSecretaryRole(value) {

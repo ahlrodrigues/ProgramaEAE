@@ -618,8 +618,9 @@ async function handleApi(request, response, url) {
 
   if (request.method === "POST" && url.pathname === "/api/turma-link-requests") {
     const body = await readJsonBody(request);
-    if (normalizeRequestedRole(session.requested_role || session.role, "Dirigente") !== "Secretário") {
-      sendJson(response, 403, { error: "Apenas usuários com solicitação de Secretário podem solicitar vínculo." });
+    const sessionRole = normalizeRole(session.role, "Usuário");
+    if (!isActiveAccount(session) || sessionRole === "Admin" || sessionRole === "Dirigente") {
+      sendJson(response, 403, { error: "Apenas usuários ativos com perfil de secretário podem solicitar vínculo." });
       return;
     }
 
