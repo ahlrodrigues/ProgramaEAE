@@ -99,7 +99,6 @@ const editProgramButton = document.querySelector("#edit-program");
 const saveProgramButton = document.querySelector("#save-program");
 const deleteProgramButton = document.querySelector("#delete-program");
 const exportMenu = document.querySelector("#export-menu");
-const exportExcelButton = document.querySelector("#export-excel");
 const exportPdfButton = document.querySelector("#export-pdf");
 const shareProgramCard = document.querySelector("#share-program-card");
 const shareProgramUrlInput = document.querySelector("#share-program-url");
@@ -805,10 +804,6 @@ function setupProgramActions() {
 
   saveProgramButton?.addEventListener("click", saveProgram);
   deleteProgramButton?.addEventListener("click", deleteSavedProgram);
-  exportExcelButton?.addEventListener("click", () => {
-    exportProgramToExcel();
-    exportMenu?.removeAttribute("open");
-  });
   exportPdfButton?.addEventListener("click", () => {
     exportProgramToPdf();
     exportMenu?.removeAttribute("open");
@@ -3024,20 +3019,6 @@ async function archiveCurrentTurma(archive) {
   }
 }
 
-function exportProgramToExcel() {
-  if (!window.XLSX) {
-    window.alert("A biblioteca de exportação ainda não foi carregada.");
-    return;
-  }
-
-  syncProgramMeta();
-  const workbook = XLSX.utils.book_new();
-  const matrix = [state.program.headers, ...state.program.rows];
-  const worksheet = XLSX.utils.aoa_to_sheet(matrix);
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Programa");
-  XLSX.writeFile(workbook, `${buildExportBaseName()}.xlsx`);
-}
-
 function exportProgramToPdf() {
   syncProgramMeta();
   const win = window.open("", "_blank", "width=1200,height=900");
@@ -3046,10 +3027,25 @@ function exportProgramToPdf() {
     return;
   }
 
+  const temaColumnIndex = state.program.headers.findIndex((header) => isTemaColumnHeader(header));
   const rowsHtml = state.program.rows
-    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .map((row) => (
+      `<tr>${row.map((cell, columnIndex) => {
+        const className = columnIndex === temaColumnIndex ? " class=\"pdf-col-tema\"" : "";
+        return `<td${className}>${escapeHtml(cell)}</td>`;
+      }).join("")}</tr>`
+    ))
     .join("");
-  const headerHtml = state.program.headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+  const headerHtml = state.program.headers
+    .map((header, columnIndex) => {
+      const className = columnIndex === temaColumnIndex ? " class=\"pdf-col-tema\"" : "";
+      return `<th${className}>${escapeHtml(header)}</th>`;
+    })
+    .join("");
+  const columnWidthPercentages = getProgramColumnWidthPercentagesForPdf();
+  const colgroupHtml = `<colgroup>${columnWidthPercentages
+    .map((width) => `<col style="width:${width.toFixed(4)}%">`)
+    .join("")}</colgroup>`;
   const turma = findCurrentTurma();
 
   win.document.write(`
@@ -3069,6 +3065,7 @@ function exportProgramToPdf() {
           tr { page-break-inside: avoid; break-inside: avoid; }
           th, td { border: 1px solid #d1d5db; padding: 10px; text-align: center; vertical-align: top; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
           th { background: #ecfeff; }
+          .pdf-col-tema { text-align: left; }
           @media print {
             html, body { width: 100%; height: auto; }
           }
@@ -3080,6 +3077,7 @@ function exportProgramToPdf() {
         <p>Data inicial: ${escapeHtml(state.program.meta.startDate || "-")}</p>
         <p>Data final: ${escapeHtml(state.program.meta.endDate || "-")}</p>
         <table>
+          ${colgroupHtml}
           <thead><tr>${headerHtml}</tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
@@ -3089,6 +3087,35 @@ function exportProgramToPdf() {
   win.document.close();
   win.focus();
   win.print();
+}
+
+function getProgramColumnWidthPercentagesForPdf() {
+  const headerRow = table.tHead?.rows?.[0];
+  const headerCells = headerRow ? Array.from(headerRow.cells).slice(1) : [];
+  const widths = headerCells.map((cell, index) => {
+    const rectWidth = Number(cell.getBoundingClientRect().width || 0);
+    if (rectWidth > 0) {
+      return rectWidth;
+    }
+
+    const fallbackWidth = getColumnWidthStyle(index);
+    const parsed = Number.parseFloat(String(fallbackWidth || "").replace("px", ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  });
+
+  const validWidths = widths.filter((value) => value > 0);
+  if (!validWidths.length || validWidths.length !== state.program.headers.length) {
+    const equal = 100 / Math.max(1, state.program.headers.length);
+    return state.program.headers.map(() => equal);
+  }
+
+  const total = validWidths.reduce((sum, value) => sum + value, 0);
+  if (!total) {
+    const equal = 100 / Math.max(1, state.program.headers.length);
+    return state.program.headers.map(() => equal);
+  }
+
+  return validWidths.map((value) => (value / total) * 100);
 }
 
 function activateTab(tabName) {
@@ -3541,7 +3568,6 @@ function updateProgramEditorLockState(isArchived) {
       exportMenu.removeAttribute("open");
     }
   }
-  if (exportExcelButton) exportExcelButton.disabled = isArchived;
   if (exportPdfButton) exportPdfButton.disabled = isArchived;
 
   table.querySelectorAll("thead .table-action-button").forEach((button) => {
