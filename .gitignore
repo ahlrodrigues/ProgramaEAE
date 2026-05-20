@@ -2,3 +2,4 @@ data/
 server.pid
 server.log
 node_modules/
+.env

@@ -662,10 +662,18 @@ async function handleApi(request, response, url) {
     const result = insertUser.run(name, email, passwordHash, role, requestedRole, accessStatus);
     const token = crypto.randomUUID();
     insertSession.run(token, result.lastInsertRowid);
+    const registeredUser = mapUser(getUserById.get(result.lastInsertRowid));
+    const welcomeEmail = buildWelcomeEmail({
+      userName: registeredUser.name,
+      userEmail: registeredUser.email,
+      userRole: registeredUser.role,
+      appUrl: buildAppHomeUrl(request),
+    });
+    logEmailNotification(registeredUser.email, welcomeEmail.subject, welcomeEmail.body);
 
     sendJson(response, 201, {
       token,
-      user: mapUser(getUserById.get(result.lastInsertRowid)),
+      user: registeredUser,
     });
     return;
   }
@@ -701,11 +709,12 @@ async function handleApi(request, response, url) {
       const tokenHash = hashOpaqueToken(rawToken);
       const expiresAt = buildFutureTimestampMinutes(30);
       insertPasswordResetTokenStmt.run(user.id, tokenHash, expiresAt);
-      logEmailNotification(
-        user.email,
-        "Recuperação de senha",
-        `Para redefinir sua senha, acesse: ${buildPasswordResetUrl(request, rawToken)}`
-      );
+      const resetEmail = buildPasswordResetEmail({
+        userName: user.name,
+        resetUrl: buildPasswordResetUrl(request, rawToken),
+        expirationMinutes: 30,
+      });
+      logEmailNotification(user.email, resetEmail.subject, resetEmail.body);
     }
 
     sendJson(response, 200, {
@@ -739,6 +748,14 @@ async function handleApi(request, response, url) {
     const passwordHash = hashPassword(password);
     updateUserPasswordStmt.run(passwordHash, tokenRow.user_id);
     usePasswordResetTokenStmt.run(tokenRow.id);
+    const updatedUser = getUserById.get(tokenRow.user_id);
+    if (updatedUser?.email) {
+      const passwordChangedEmail = buildPasswordChangedConfirmationEmail({
+        userName: updatedUser.name,
+        appUrl: buildAppHomeUrl(request),
+      });
+      logEmailNotification(updatedUser.email, passwordChangedEmail.subject, passwordChangedEmail.body);
+    }
     sendJson(response, 200, { success: true });
     return;
   }
@@ -771,6 +788,11 @@ async function handleApi(request, response, url) {
     }
 
     updateUserPasswordStmt.run(hashPassword(nextPassword), session.id);
+    const passwordChangedEmail = buildPasswordChangedConfirmationEmail({
+      userName: user.name,
+      appUrl: buildAppHomeUrl(request),
+    });
+    logEmailNotification(user.email, passwordChangedEmail.subject, passwordChangedEmail.body);
     sendJson(response, 200, { success: true });
     return;
   }
@@ -1887,12 +1909,16 @@ function syncSecretaryInviteLinksForTurma(request, session, turma, secretarios) 
     }
 
     const inviteUrl = buildSecretaryInviteUrl(request, token);
-    logEmailNotification(
-      candidate.email,
-      `Confirmação de vínculo - turma ${turma.nome}`,
-      `Você foi indicado como secretário da turma ${turma.nome}. ` +
-      `Para confirmar seu vínculo, acesse: ${inviteUrl}`
-    );
+    const secretaryInviteEmail = buildSecretaryInviteEmail({
+      secretaryName: candidate.name,
+      turmaName: turma.nome,
+      turmaType: turma.tipo,
+      inviterName: session.name,
+      inviteUrl,
+      expirationHours: SECRETARY_INVITE_EXPIRATION_HOURS,
+      expiresAt: buildSecretaryInviteExpirationTimestamp(),
+    });
+    logEmailNotification(candidate.email, secretaryInviteEmail.subject, secretaryInviteEmail.body);
   });
 }
 
@@ -2255,6 +2281,81 @@ function logEmailNotification(to, subject, message) {
   });
 }
 
+function buildWelcomeEmail({ userName, userEmail, userRole, appUrl }) {
+  return {
+    subject: "Cadastro confirmado - Plataforma EAE",
+    body:
+      `Olá, ${userName || "usuário(a)"}.\n\n` +
+      "Seu cadastro na Plataforma EAE foi concluído com sucesso.\n\n" +
+      "Dados da conta:\n" +
+      `- Nome: ${userName || "não informado"}\n` +
+      `- E-mail: ${userEmail || "não informado"}\n` +
+      `- Perfil inicial: ${userRole || "Usuário"}\n\n` +
+      "Acesse a plataforma:\n" +
+      `${appUrl}\n\n` +
+      "Se precisar de suporte, responda este e-mail.\n\n" +
+      "Atenciosamente,\n" +
+      "Equipe EAE",
+  };
+}
+
+function buildPasswordResetEmail({ userName, resetUrl, expirationMinutes = 30 }) {
+  return {
+    subject: "Redefinição de senha - Plataforma EAE",
+    body:
+      `Olá, ${userName || "usuário(a)"}.\n\n` +
+      "Recebemos uma solicitação para redefinir a senha da sua conta na Plataforma EAE.\n\n" +
+      "Para cadastrar uma nova senha, acesse o link abaixo:\n" +
+      `${resetUrl}\n\n` +
+      `Este link expira em ${expirationMinutes} minutos.\n\n` +
+      "Se você não fez esta solicitação, ignore este e-mail.\n\n" +
+      "Atenciosamente,\n" +
+      "Equipe EAE",
+  };
+}
+
+function buildPasswordChangedConfirmationEmail({ userName, appUrl }) {
+  return {
+    subject: "Senha alterada com sucesso - Plataforma EAE",
+    body:
+      `Olá, ${userName || "usuário(a)"}.\n\n` +
+      "Confirmamos que a senha da sua conta na Plataforma EAE foi alterada com sucesso.\n\n" +
+      "Você já pode acessar a plataforma com a nova senha:\n" +
+      `${appUrl}\n\n` +
+      "Se você não reconhece esta alteração, redefina sua senha imediatamente e entre em contato com o suporte.\n\n" +
+      "Atenciosamente,\n" +
+      "Equipe EAE",
+  };
+}
+
+function buildSecretaryInviteEmail({
+  secretaryName,
+  turmaName,
+  turmaType,
+  inviterName,
+  inviteUrl,
+  expirationHours,
+  expiresAt,
+}) {
+  return {
+    subject: `Convite para vínculo como Secretário(a) - Turma ${turmaName || "não informada"}`,
+    body:
+      `Olá, ${secretaryName || "secretário(a)"}.\n\n` +
+      `Você foi convidado(a) para atuar como Secretário(a) na turma ${turmaName || "não informada"} da Plataforma EAE.\n\n` +
+      "Para confirmar seu vínculo, acesse:\n" +
+      `${inviteUrl}\n\n` +
+      "Detalhes:\n" +
+      `- Turma: ${turmaName || "não informada"}\n` +
+      `- Tipo: ${turmaType || "não informado"}\n` +
+      `- Convidado por: ${inviterName || "não informado"}\n` +
+      `- Validade do convite: ${expiresAt || "não informada"} (${expirationHours || 48} horas)\n\n` +
+      "Se você já possui conta com este e-mail, faça login e abra o link acima para confirmar.\n" +
+      "Se ainda não possui conta, faça o cadastro com este mesmo e-mail e depois confirme pelo link.\n\n" +
+      "Atenciosamente,\n" +
+      "Equipe EAE",
+  };
+}
+
 function normalizeOptionalId(value) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -2296,26 +2397,30 @@ function resolvePublicProgramTurmaId(token) {
 }
 
 function buildPublicProgramUrl(request, token) {
-  const host = request.headers.host || `127.0.0.1:${PORT}`;
-  const protocol = host.includes("localhost") || host.startsWith("127.0.0.1")
-    ? "http"
-    : "https";
+  const { protocol, host } = resolveRequestOrigin(request);
   return `${protocol}://${host}/?shareToken=${encodeURIComponent(token)}`;
 }
 
-function buildSecretaryInviteUrl(request, token) {
+function buildAppHomeUrl(request) {
+  const { protocol, host } = resolveRequestOrigin(request);
+  return `${protocol}://${host}/`;
+}
+
+function resolveRequestOrigin(request) {
   const host = request.headers.host || `127.0.0.1:${PORT}`;
   const protocol = host.includes("localhost") || host.startsWith("127.0.0.1")
     ? "http"
     : "https";
+  return { host, protocol };
+}
+
+function buildSecretaryInviteUrl(request, token) {
+  const { protocol, host } = resolveRequestOrigin(request);
   return `${protocol}://${host}/?secretaryInviteToken=${encodeURIComponent(token)}`;
 }
 
 function buildPasswordResetUrl(request, token) {
-  const host = request.headers.host || `127.0.0.1:${PORT}`;
-  const protocol = host.includes("localhost") || host.startsWith("127.0.0.1")
-    ? "http"
-    : "https";
+  const { protocol, host } = resolveRequestOrigin(request);
   return `${protocol}://${host}/?resetPasswordToken=${encodeURIComponent(token)}`;
 }
 

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Plataforma inicial para cadastro de turmas e programas de aulas.",
   "scripts": {
-    "start": "node server.js",
+    "start": "node --env-file=.env server.js",
     "server:start": "bash scripts/server-local.sh start",
     "server:restart": "bash scripts/server-local.sh restart",
     "server:restart:manual": "bash reiniciar_servidor_manual.sh",

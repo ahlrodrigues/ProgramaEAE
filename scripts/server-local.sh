@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PID_FILE="$ROOT_DIR/server.pid"
 LOG_FILE="$ROOT_DIR/server.log"
+ENV_FILE="$ROOT_DIR/.env"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-3000}"
 DB_PATH="${DB_PATH:-$ROOT_DIR/data/eae.sqlite}"
@@ -38,6 +39,12 @@ start_server() {
 
   mkdir -p "$(dirname "$DB_PATH")"
   cd "$ROOT_DIR"
+  if [[ -f "$ENV_FILE" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
+  fi
   setsid env HOST="$HOST" PORT="$PORT" DB_PATH="$DB_PATH" node server.js >> "$LOG_FILE" 2>&1 < /dev/null &
   echo $! > "$PID_FILE"
   sleep 1

@@ -20,35 +20,33 @@ Plataforma inicial para gestão de turmas escolares e seus programas de aulas.
 - Inclusão e remoção de linhas e colunas
 - Edição livre de cabeçalhos e células
 - Remoção do programa salvo de uma turma
-- Exportação do programa para Excel
-- Exportação do programa para PDF via impressão do navegador
+- Exportação do programa para PDF via impressão do navegador, respeitando largura de colunas
 - Persistência local em SQLite
 - Promoção automática de perfil para `Dirigente` ao criar a primeira turma
-- Promoção automática de perfil para `Secretário` ao aceitar convite de turma
-- Área de `Aprovações` separada em `Cadastros sem vínculo` e `Vínculos com turma`
-- Solicitação de vínculo de secretário para turma específica e decisão no card da turma correspondente
-- Convite de secretário por turma com controle de pendência e aceite de convite
+- Promoção automática de perfil para `Secretário` ao confirmar vínculo de turma
+- Convite de secretário por turma via e-mail de confirmação com token
+- Validade de convite de secretário em 48 horas, com limpeza automática de registros encerrados após 30 dias
 - Registro de vínculo por turma com suporte a múltiplas turmas por secretário (`turma_members`)
 - Permissões de convite para `Admin`, `Dirigente` e `Secretário` com acesso ativo
-- Registro histórico de aprovações e convites na interface
+- Link público de visualização do programa (somente leitura, sem login)
+- Recuperação de senha por e-mail com token e redefinição de senha
+- Alteração de senha para usuário autenticado
 
 ## Decisões recentes (2026-05-20)
 
 - Removida a necessidade de aprovação manual no cadastro.
 - Usuário novo entra como `Usuário` com acesso ativo.
 - Usuário vira `Dirigente` ao criar turma.
-- Usuário vira `Secretário` ao aceitar convite para turma.
+- Usuário vira `Secretário` ao confirmar vínculo por link de e-mail.
 - Usuário pode ter múltiplas turmas ativas simultaneamente.
 
-## Em andamento (não finalizado)
-
-- Separação da área de `Aprovações` em dois fluxos:
-  - `Cadastros sem vínculo`
-  - `Vínculos com turma`
-- Exibição e decisão de solicitações de vínculo diretamente no card da turma correspondente, na aba `Turmas`.
-- Ajustes de UX e validação desse fluxo ainda pendentes (layout final, consistência visual e testes completos de ponta a ponta).
-
 ## Como executar
+
+0. Configure as variáveis de ambiente:
+
+```bash
+cp .env.example .env
+```
 
 1. No diretório do projeto, rode:
 
@@ -102,68 +100,52 @@ npm run server:status
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
+- `POST /api/auth/forgot-password`
+- `POST /api/auth/reset-password`
+- `POST /api/auth/change-password`
 - `GET /api/session`
-- `GET /api/users`
-- `PUT /api/users/:id`
 - `GET /api/turmas`
 - `POST /api/turmas`
 - `GET /api/turmas/:id`
 - `PUT /api/turmas/:id`
 - `DELETE /api/turmas/:id`
 - `POST /api/turmas/:id/archive`
+- `GET /api/turmas/:id/share-link`
 - `PUT /api/turmas/:id/program`
 - `DELETE /api/turmas/:id/program`
+- `GET /api/public/programa/:token`
+- `POST /api/secretary-invite-links/:token/accept`
 
 ## Próximos passos sugeridos
 
-## Validação E2E (2026-05-20)
+### Operação e confiabilidade
 
-- Status do ambiente nesta sessão: execução E2E automatizada por HTTP local bloqueada por sandbox (`EPERM 127.0.0.1`).
-- Critério adotado nesta revisão: confirmação por leitura de código + endpoints implementados; execução funcional final fica para rodada manual/local sem bloqueio de rede.
+- Configurar SMTP em produção e validar entrega real de e-mails de vínculo e recuperação de senha.
+- Adicionar monitoramento e alerta para falhas de envio (`logEmailNotification`) e expiração de convites.
+- Criar backup automático do SQLite com política de retenção e restore documentado.
 
-Checklist do fluxo de aprovações e vínculos:
+### Segurança
 
-- [x] Cadastro de novo usuário com perfil inicial `Usuário` e `access_status` ativo.
-- [x] Promoção para `Dirigente` ao criar a primeira turma.
-- [x] Exibição da aba `Aprovações` em dois fluxos (`Cadastros sem vínculo` e `Vínculos com turma`).
-- [x] Solicitação de vínculo por secretário pendente para turma ativa de dirigente.
-- [x] Aprovação/rejeição de solicitação de vínculo pelo dirigente da turma (ou admin).
-- [x] Ativação do secretário após aprovação de vínculo e criação do vínculo em `turma_members`.
-- [x] Exibição de histórico de aprovações/convites (`/api/access-events`).
-- [ ] Execução manual ponta a ponta no navegador (incluindo mensagens visuais e navegação entre abas).
-- [ ] Execução automatizada de regressão E2E (script/CI) em ambiente sem bloqueio de loopback local.
+- Implementar rate limit para login, recuperação e redefinição de senha.
+- Invalidar sessões ativas após redefinição de senha.
+- Adicionar política de senha (complexidade mínima e troca periódica opcional por configuração).
 
-### Fase 1: cadastro, perfis e fluxo principal
+### Fluxo de secretários
 
-- Validar o fluxo principal: usuário aprovado como dirigente entra na plataforma, cria uma turma, importa os alunos e recebe o programa padrão.
-- Garantir que alterações no programa sejam salvas apenas para a turma selecionada.
-- Melhorar a validação das planilhas de importação de alunos, com mensagens claras para e-mails inválidos, duplicidades e linhas incompletas.
-- Integrar envio real de e-mail (SMTP/serviço externo), substituindo o log local de notificações pendentes.
+- Criar tela de “Convites enviados” por turma, com status (`pending`, `accepted`, `expired`) e opção de reenviar convite.
+- Permitir cancelamento explícito de convite pendente pelo dirigente.
+- Cobrir E2E de ponta a ponta dos cenários: novo cadastro via convite, login existente via convite e convite expirado.
+- Verificar se basta preencher os dados do secretário para o e-mail ser enviado automaticamente ou se é necessário um botão de cadastro.
+- Se for necessário confirmar o envio por ação explícita, criar botão para cadastro/envio do secretário.
 
-### Fase 2: secretários e permissões por turma
+### Programa e experiência pública
 
-- Validar o cenário “secretário cria turma” para garantir preenchimento/consistência do campo dirigente em todos os pontos da UI e exportações.
-- Cobrir com testes de ponta a ponta os fluxos de convite, aceite e rejeição de vínculo.
+- Melhorar a visualização pública para mobile (quebra de colunas largas e paginação opcional).
+- Adicionar opção de revogar/regenerar link público de compartilhamento por turma.
+- Criar opção de exportação PDF da visão pública sem controles administrativos.
 
-### Fase 3: programas e histórico
+### UX no cadastro de turma
 
-- Criar versionamento de programas e histórico de alterações.
-- Permitir importação do programa de outra turma do mesmo tipo, removendo informações específicas como data, facilitador e contato.
-- Implementar autoarquivamento da turma 7 dias após a última aula registrada no programa.
-
-### Fase 4: segurança e backup
-
-- Definir a estratégia de criptografia dos dados antes da implementação, especialmente se a descriptografia deve acontecer apenas no navegador.
-- Criar sistema de backup automático ligado a algum drive.
-- Avisar o usuário em todo login quando o backup ainda não estiver configurado.
-- Sugerir e exigir troca de senha uma vez por ano.
-
-### Fase 5: comunicação e conteúdo
-
-- Criar bot do Telegram para aviso de publicação de temas.
-- Criar calendário da turma com eventos e avisos cadastrados pelo dirigente.
-- Garantir que cada aluno receba apenas mensagens correspondentes à sua turma.
-- Escrever manual de utilização em uma página separada, incluindo a sugestão de uso do Telegram para avisos automáticos.
-- Criar página de perguntas frequentes para o perfil do dirigente.
-- Criar página de fale conosco com formulário e integração com mensageiro.
-- Criar rodapé dinâmico com links úteis, contato e informações da plataforma.
+- Ao abrir o cadastro da turma, permitir edição imediata dos dados sem exigir clique no botão `Editar`.
+- Remover o botão `Salvar cadastro` (o fluxo já utiliza salvamento automático).
+- Verificar se o salvamento automático no cadastro de turma está funcionando em todos os campos relevantes.

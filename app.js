@@ -508,7 +508,7 @@ function setupForms() {
     turmaSummary.textContent = "Preencha os dados para cadastrar uma nova turma.";
   });
 
-  editTurmaButton.addEventListener("click", () => {
+  editTurmaButton?.addEventListener("click", () => {
     const turma = findCurrentTurma();
     if (!turma || turma.archivedAt) {
       return;
@@ -1046,7 +1046,7 @@ async function loadTurmas(preferredTurmaId = null) {
   state.currentTurmaId = hasPreferred ? preferredTurmaId : (hasCurrent ? state.currentTurmaId : null);
   state.isCreatingTurma = false;
   state.isTurmaDetailsOpen = false;
-  state.isEditingTurma = false;
+  state.isEditingTurma = true;
   renderTurmaForm();
   renderContactsForm();
   renderTurmaActions();
@@ -1063,7 +1063,7 @@ async function selectTurma(turmaId) {
   state.currentProgramTab = getProgramTabForTurmaType(response.turma.tipo) || state.currentProgramTab;
   state.isCreatingTurma = false;
   state.isTurmaDetailsOpen = true;
-  state.isEditingTurma = false;
+  state.isEditingTurma = true;
   updateTurmaInState(response.turma);
   state.program = resolveProgramForActiveTab(response.program);
   state.manualColumnWidths = {};
@@ -1829,15 +1829,13 @@ function renderTurmaFormButtons(turma = null) {
   const isFormVisible = !turmaForm.hidden;
 
   if (editTurmaButton) {
-    editTurmaButton.hidden = !isFormVisible || !hasTurma || isArchived || state.isCreatingTurma;
-    editTurmaButton.disabled = state.isEditingTurma;
-    editTurmaButton.classList.toggle("is-active", state.isEditingTurma);
-    editTurmaButton.setAttribute("aria-pressed", String(state.isEditingTurma));
+    editTurmaButton.hidden = true;
+    editTurmaButton.disabled = true;
   }
 
   if (saveTurmaButton) {
-    saveTurmaButton.hidden = !isFormVisible;
-    saveTurmaButton.disabled = !state.isCreatingTurma && !state.isEditingTurma;
+    saveTurmaButton.hidden = true;
+    saveTurmaButton.disabled = true;
   }
 }
 
@@ -2263,10 +2261,6 @@ async function persistTurmaForm({ autosave = false, navigateToProgram = false } 
     return null;
   }
 
-  if (autosave && !state.currentTurmaId) {
-    return null;
-  }
-
   const payload = getTurmaFormPayload();
   const method = state.currentTurmaId ? "PUT" : "POST";
   const path = state.currentTurmaId
@@ -2276,6 +2270,7 @@ async function persistTurmaForm({ autosave = false, navigateToProgram = false } 
   const response = await apiRequest(path, { method, body: payload });
   state.currentScope = response.turma.archivedAt ? "archived" : "active";
   state.currentTurmaId = response.turma.id;
+  state.isCreatingTurma = false;
   state.currentProgramTab = getProgramTabForTurmaType(response.turma.tipo) || state.currentProgramTab;
   updateTurmaInState(response.turma);
   renderScopeButtons();
@@ -2372,7 +2367,7 @@ function handleTurmaAutosaveInput(event) {
   if (!event.target?.name) {
     return;
   }
-  if (!state.isEditingTurma || !state.currentTurmaId) {
+  if (!state.isEditingTurma) {
     return;
   }
   scheduleTurmaAutosave();
@@ -2389,7 +2384,10 @@ function handleContactsAutosaveInput(event) {
 }
 
 function scheduleTurmaAutosave() {
-  if (!state.session || !state.isEditingTurma || !state.currentTurmaId) {
+  if (!state.session || !state.isEditingTurma) {
+    return;
+  }
+  if (!String(turmaForm.elements.nome?.value || "").trim()) {
     return;
   }
   autosaveState.turmaDirty = true;
