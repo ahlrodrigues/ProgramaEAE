@@ -328,6 +328,10 @@ h4 {
   flex: 1;
 }
 
+#open-share-program-link {
+  text-decoration: none;
+}
+
 #program-class-number {
   max-width: 140px;
 }
