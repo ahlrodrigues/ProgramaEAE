@@ -488,7 +488,7 @@ function setupForms() {
   turmaForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await persistTurmaForm({ autosave: false, navigateToProgram: true });
+      await persistTurmaForm({ autosave: false, navigateToProgram: false });
     } catch (error) {
       turmaSummary.textContent = error.message;
       showToast("error", "Erro ao salvar", error.message);
@@ -843,14 +843,7 @@ async function loadTurmas(preferredTurmaId = null) {
 
   const hasPreferred = preferredTurmaId && state.turmas.some((turma) => turma.id === preferredTurmaId);
   const hasCurrent = state.currentTurmaId && state.turmas.some((turma) => turma.id === state.currentTurmaId);
-  const nextId = hasPreferred ? preferredTurmaId : hasCurrent ? state.currentTurmaId : null;
-
-  if (nextId) {
-    await selectTurma(nextId);
-    return;
-  }
-
-  state.currentTurmaId = null;
+  state.currentTurmaId = hasPreferred ? preferredTurmaId : (hasCurrent ? state.currentTurmaId : null);
   state.isCreatingTurma = false;
   state.isTurmaDetailsOpen = false;
   state.isEditingTurma = false;
