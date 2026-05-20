@@ -4,9 +4,9 @@ Plataforma inicial para gestão de turmas escolares e seus programas de aulas.
 
 ## O que já está disponível
 
-- Cadastro de usuário com criação de sessão
+- Cadastro de usuário com criação de sessão e acesso imediato
 - Login e logout com autenticação básica
-- Perfis de acesso `Admin` e `Dirigente`
+- Perfis de acesso `Admin`, `Usuário`, `Dirigente` e `Secretário`
 - Cadastro, edição, arquivamento, restauração e exclusão de turmas
 - Listagem de turmas por usuário
 - Criação de nova turma com cópia opcional de programa existente
@@ -23,6 +23,22 @@ Plataforma inicial para gestão de turmas escolares e seus programas de aulas.
 - Exportação do programa para Excel
 - Exportação do programa para PDF via impressão do navegador
 - Persistência local em SQLite
+- Promoção automática de perfil para `Dirigente` ao criar a primeira turma
+- Promoção automática de perfil para `Secretário` ao aceitar convite de turma
+- Área de `Aprovações` separada em `Cadastros sem vínculo` e `Vínculos com turma`
+- Solicitação de vínculo de secretário para turma específica e decisão no card da turma correspondente
+- Convite de secretário por turma com controle de pendência e aceite de convite
+- Registro de vínculo por turma com suporte a múltiplas turmas por secretário (`turma_members`)
+- Permissões de convite para `Admin`, `Dirigente` e `Secretário` com acesso ativo
+- Registro histórico de aprovações e convites na interface
+
+## Decisões recentes (2026-05-20)
+
+- Removida a necessidade de aprovação manual no cadastro.
+- Usuário novo entra como `Usuário` com acesso ativo.
+- Usuário vira `Dirigente` ao criar turma.
+- Usuário vira `Secretário` ao aceitar convite para turma.
+- Usuário pode ter múltiplas turmas ativas simultaneamente.
 
 ## Em andamento (não finalizado)
 
@@ -100,28 +116,34 @@ npm run server:status
 
 ## Próximos passos sugeridos
 
+## Validação E2E (2026-05-20)
+
+- Status do ambiente nesta sessão: execução E2E automatizada por HTTP local bloqueada por sandbox (`EPERM 127.0.0.1`).
+- Critério adotado nesta revisão: confirmação por leitura de código + endpoints implementados; execução funcional final fica para rodada manual/local sem bloqueio de rede.
+
+Checklist do fluxo de aprovações e vínculos:
+
+- [x] Cadastro de novo usuário com perfil inicial `Usuário` e `access_status` ativo.
+- [x] Promoção para `Dirigente` ao criar a primeira turma.
+- [x] Exibição da aba `Aprovações` em dois fluxos (`Cadastros sem vínculo` e `Vínculos com turma`).
+- [x] Solicitação de vínculo por secretário pendente para turma ativa de dirigente.
+- [x] Aprovação/rejeição de solicitação de vínculo pelo dirigente da turma (ou admin).
+- [x] Ativação do secretário após aprovação de vínculo e criação do vínculo em `turma_members`.
+- [x] Exibição de histórico de aprovações/convites (`/api/access-events`).
+- [ ] Execução manual ponta a ponta no navegador (incluindo mensagens visuais e navegação entre abas).
+- [ ] Execução automatizada de regressão E2E (script/CI) em ambiente sem bloqueio de loopback local.
+
 ### Fase 1: cadastro, perfis e fluxo principal
 
-- Alterar o cadastro para que todo novo usuário entre como `Pendente` e solicite o perfil desejado: `Dirigente` ou `Secretário`.
-- Enviar solicitações de `Dirigente` para uma lista visível aos dirigentes já aprovados e aos admins; uma aprovação deve liberar o perfil de dirigente.
-- Manter aprovações e convites em uma aba própria, visível para todos os dirigentes aprovados, registrando quem aprovou cada perfil e quem convidou cada participante.
-- Manter o `Admin` com permissão para aprovar, rejeitar e alterar perfis quando necessário.
-- Enviar e-mail ao usuário quando sua solicitação de perfil for aprovada ou rejeitada.
 - Validar o fluxo principal: usuário aprovado como dirigente entra na plataforma, cria uma turma, importa os alunos e recebe o programa padrão.
 - Garantir que alterações no programa sejam salvas apenas para a turma selecionada.
 - Melhorar a validação das planilhas de importação de alunos, com mensagens claras para e-mails inválidos, duplicidades e linhas incompletas.
+- Integrar envio real de e-mail (SMTP/serviço externo), substituindo o log local de notificações pendentes.
 
 ### Fase 2: secretários e permissões por turma
 
-- Manter solicitações de `Secretário` na mesma lista de pendências, aguardando convite para participação em turma.
-- Enviar convite por e-mail para secretários participarem de uma turma específica.
-- Registrar quem enviou cada convite de turma.
-- Permitir que secretários visualizem convites pendentes, aceitem o convite e só então acessem as turmas das quais fazem parte.
-- Registrar o vínculo do secretário por turma, permitindo múltiplas turmas por secretário.
-- Permitir que um secretário crie uma turma; nesse caso, seu nome deve ocupar o campo de dirigente.
-- Permitir que dirigentes e secretários convidem novos secretários para suas turmas.
-- Permitir que um secretário participe de várias turmas.
-- Permitir que um dirigente possua várias turmas e também seja secretário em outras.
+- Validar o cenário “secretário cria turma” para garantir preenchimento/consistência do campo dirigente em todos os pontos da UI e exportações.
+- Cobrir com testes de ponta a ponta os fluxos de convite, aceite e rejeição de vínculo.
 
 ### Fase 3: programas e histórico
 

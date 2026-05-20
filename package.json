@@ -10,5 +10,8 @@
     "server:restart:manual": "bash reiniciar_servidor_manual.sh",
     "server:stop": "bash scripts/server-local.sh stop",
     "server:status": "bash scripts/server-local.sh status"
+  },
+  "dependencies": {
+    "nodemailer": "^8.0.7"
   }
 }

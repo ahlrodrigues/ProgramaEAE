@@ -135,11 +135,6 @@ async function bootstrap() {
     const session = await apiRequest("/api/session");
     state.session = session.user;
     renderSession();
-    if (!hasAppAccess()) {
-      await renderPendingAccessState();
-      activateTab("login");
-      return;
-    }
     await loadReferenceData();
     await loadTurmas();
     activateTab("turmas");
@@ -453,12 +448,6 @@ function setupForms() {
       state.session = response.user;
       loginForm.reset();
       renderSession();
-      if (!hasAppAccess()) {
-        await renderPendingAccessState();
-        showToast("success", "Login realizado", "Seu cadastro ainda aguarda aprovação.");
-        activateTab("login");
-        return;
-      }
       await loadReferenceData();
       authNotice.textContent = "Login realizado com sucesso.";
       showToast("success", "Login realizado", "Sua sessão foi iniciada com sucesso.");
@@ -485,12 +474,6 @@ function setupForms() {
       state.session = response.user;
       registerForm.reset();
       renderSession();
-      if (!hasAppAccess()) {
-        await renderPendingAccessState();
-        showToast("success", "Cadastro solicitado", "Sua solicitação foi registrada e aguarda aprovação.");
-        activateTab("login");
-        return;
-      }
       await loadReferenceData();
       authNotice.textContent = "Conta criada e sessão iniciada.";
       showToast("success", "Conta criada", "Sua conta foi criada e a sessão já está ativa.");
@@ -2485,7 +2468,7 @@ function renderSession() {
   sessionChip.textContent = state.session
     ? `${state.session.name} · ${formatUserAccessLabel(state.session)}`
     : "Visitante";
-  document.body.classList.toggle("is-authenticated", Boolean(state.session));
+  document.body.classList.toggle("is-authenticated", hasAppAccess());
   if (userMenuPanel) {
     userMenuPanel.hidden = true;
   }
@@ -2612,8 +2595,8 @@ function updateAccessControlledTabs() {
   tabs.forEach((tab) => {
     const target = tab.dataset.tabTarget;
     const isAuthTab = target === "login" || target === "cadastro";
-    tab.hidden = Boolean(state.session) && isAuthTab;
-    const requiresLogin = tab.dataset.tabTarget !== "login";
+    tab.hidden = hasAppAccess() && isAuthTab;
+    const requiresLogin = tab.dataset.tabTarget !== "login" && tab.dataset.tabTarget !== "cadastro";
     const requiresApprovalAccess = tab.dataset.tabTarget === "aprovacoes";
     const programType = getProgramTypeForTab(tab);
     const requiresMatchingTurma = Boolean(programType);
@@ -2630,7 +2613,7 @@ function updateAccessControlledTabs() {
 
   const activeTab = tabs.find((tab) => tab.classList.contains("is-active"));
   if (activeTab?.disabled) {
-    activateTab(hasAppAccess() ? "turmas" : "login");
+    activateTab(hasAppAccess() ? "turmas" : (state.session ? "cadastro" : "login"));
   }
 }
 

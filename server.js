@@ -2,6 +2,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const nodemailer = require("nodemailer");
 const { DatabaseSync } = require("node:sqlite");
 
 const HOST = process.env.HOST || "127.0.0.1";
@@ -9,13 +10,31 @@ const PORT = Number(process.env.PORT || 3000);
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "eae.sqlite");
-const ROLES = new Set(["Admin", "Dirigente", "Secretário", "Pendente"]);
+const ROLES = new Set(["Admin", "Dirigente", "Secretário", "Usuário", "Pendente"]);
 const REQUESTED_ROLES = new Set(["Dirigente", "Secretário"]);
 const ACCESS_STATUSES = new Set(["pending", "active", "rejected"]);
 const DEFAULT_USERS = [
   { name: "Admin EAE", email: "admin@eae.local", password: "123456", role: "Admin", requestedRole: "Admin" },
   { name: "Dirigente EAE", email: "dirigente@eae.local", password: "123456", role: "Dirigente", requestedRole: "Dirigente" },
 ];
+const EMAIL_ENABLED = String(process.env.EMAIL_ENABLED || "false").toLowerCase() === "true";
+const EMAIL_FROM = process.env.EMAIL_FROM || process.env.MAIL_FROM || "no-reply@eae.local";
+const SMTP_HOST = process.env.SMTP_HOST || "";
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
+const SMTP_USER = process.env.SMTP_USER || process.env.GMAIL_USER || "";
+const SMTP_PASS = process.env.SMTP_PASS || process.env.GMAIL_PASS || "";
+const smtpTransporter = EMAIL_ENABLED && SMTP_HOST && SMTP_USER && SMTP_PASS
+  ? nodemailer.createTransport({
+      host: SMTP_HOST,
+      port: SMTP_PORT,
+      secure: SMTP_SECURE,
+      auth: {
+        user: SMTP_USER,
+        pass: SMTP_PASS,
+      },
+    })
+  : null;
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
@@ -528,14 +547,11 @@ async function handleApi(request, response, url) {
     }
 
     const totalUsers = countUsersStmt.get().total;
-    const requestedRole = normalizeRequestedRole(body.requestedRole || body.role, "Dirigente");
-    const role = totalUsers === 0 ? "Admin" : "Pendente";
-    const accessStatus = totalUsers === 0 ? "active" : "pending";
+    const requestedRole = totalUsers === 0 ? "Admin" : "Usuário";
+    const role = totalUsers === 0 ? "Admin" : "Usuário";
+    const accessStatus = "active";
     const passwordHash = hashPassword(password);
     const result = insertUser.run(name, email, passwordHash, role, requestedRole, accessStatus);
-    if (accessStatus === "pending") {
-      insertProfileRequestStmt.run(result.lastInsertRowid, requestedRole);
-    }
     const token = crypto.randomUUID();
     insertSession.run(token, result.lastInsertRowid);
 
@@ -657,7 +673,7 @@ async function handleApi(request, response, url) {
 
     acceptTurmaInviteStmt.run(invite.id);
     upsertTurmaMemberStmt.run(invite.turma_id, session.id, "Secretário", invite.invited_by_user_id);
-    updateUserRoleStmt.run("Secretário", "Secretário", "active", session.id);
+    promoteSessionUserToSecretaryIfNeeded(session);
     const inviteDecision = updateLatestProfileRequestStmt.run("active", invite.invited_by_user_id, session.id);
     if (!inviteDecision.changes) {
       insertProfileRequestDecisionStmt.run(session.id, "Secretário", "active", invite.invited_by_user_id);
@@ -701,16 +717,19 @@ async function handleApi(request, response, url) {
         insertProfileRequestDecisionStmt.run(linkRequest.requester_user_id, "Secretário", "active", session.id);
       }
       updateTurmaLinkRequestStatusStmt.run("approved", session.id, requestId);
+      const requester = getUserById.get(linkRequest.requester_user_id);
+      if (requester?.email) {
+        logEmailNotification(
+          requester.email,
+          "Solicitação de vínculo aprovada",
+          `Seu vínculo como secretário na turma ${turma.nome} foi aprovado por ${session.name}.`
+        );
+      }
     } else {
       updateTurmaLinkRequestStatusStmt.run("rejected", session.id, requestId);
     }
 
     sendJson(response, 200, { success: true });
-    return;
-  }
-
-  if (!isActiveAccount(session)) {
-    sendJson(response, 403, { error: "Seu cadastro ainda está aguardando aprovação." });
     return;
   }
 
@@ -763,8 +782,13 @@ async function handleApi(request, response, url) {
       return;
     }
 
-    if (normalizeAccessStatus(targetUser.access_status, "pending") !== "pending" || normalizeRequestedRole(targetUser.requested_role, "Dirigente") !== "Secretário") {
-      sendJson(response, 400, { error: "Selecione um usuário pendente com solicitação de Secretário." });
+    if (targetUser.id === session.id) {
+      sendJson(response, 400, { error: "Não é possível convidar o próprio usuário." });
+      return;
+    }
+
+    if (!isActiveAccount(targetUser)) {
+      sendJson(response, 400, { error: "Selecione um usuário com cadastro ativo." });
       return;
     }
 
@@ -833,6 +857,7 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === "POST" && url.pathname === "/api/turmas") {
+    promoteSessionUserToDirigenteIfNeeded(session);
     const body = await readJsonBody(request);
     const payload = sanitizeTurma(body, session);
     const result = createTurmaStmt.run(
@@ -1002,8 +1027,8 @@ function initializeDatabase() {
       name TEXT NOT NULL,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'Dirigente',
-      requested_role TEXT NOT NULL DEFAULT 'Dirigente',
+      role TEXT NOT NULL DEFAULT 'Usuário',
+      requested_role TEXT NOT NULL DEFAULT 'Usuário',
       access_status TEXT NOT NULL DEFAULT 'active',
       dirigente_nome TEXT,
       secretarios_json TEXT,
@@ -1112,8 +1137,8 @@ function initializeDatabase() {
     );
   `);
 
-  ensureColumn("users", "role", "TEXT NOT NULL DEFAULT 'Dirigente'");
-  ensureColumn("users", "requested_role", "TEXT NOT NULL DEFAULT 'Dirigente'");
+  ensureColumn("users", "role", "TEXT NOT NULL DEFAULT 'Usuário'");
+  ensureColumn("users", "requested_role", "TEXT NOT NULL DEFAULT 'Usuário'");
   ensureColumn("users", "access_status", "TEXT NOT NULL DEFAULT 'active'");
   ensureColumn("users", "dirigente_nome", "TEXT");
   ensureColumn("users", "secretarios_json", "TEXT");
@@ -1159,7 +1184,7 @@ function initializeDatabase() {
   `);
   db.exec(`
     UPDATE users
-    SET role = 'Dirigente'
+    SET role = 'Usuário'
     WHERE role IS NULL OR role = '';
   `);
   db.exec(`
@@ -1168,6 +1193,11 @@ function initializeDatabase() {
       WHEN requested_role IS NULL OR requested_role = '' THEN role
       ELSE requested_role
     END
+  `);
+  db.exec(`
+    UPDATE users
+    SET role = 'Usuário', requested_role = 'Usuário', access_status = 'active'
+    WHERE role = 'Pendente';
   `);
   db.exec(`
     UPDATE users
@@ -1356,6 +1386,28 @@ function isApprovedDirigente(session) {
 
 function isActiveAccount(user) {
   return (user.access_status || "active") === "active";
+}
+
+function promoteSessionUserToDirigenteIfNeeded(session) {
+  const currentRole = normalizeRole(session.role, "Usuário");
+  if (currentRole === "Admin" || currentRole === "Dirigente") {
+    return;
+  }
+  updateUserRoleStmt.run("Dirigente", "Dirigente", "active", session.id);
+  session.role = "Dirigente";
+  session.requested_role = "Dirigente";
+  session.access_status = "active";
+}
+
+function promoteSessionUserToSecretaryIfNeeded(session) {
+  const currentRole = normalizeRole(session.role, "Usuário");
+  if (currentRole === "Admin" || currentRole === "Dirigente" || currentRole === "Secretário") {
+    return;
+  }
+  updateUserRoleStmt.run("Secretário", "Secretário", "active", session.id);
+  session.role = "Secretário";
+  session.requested_role = "Secretário";
+  session.access_status = "active";
 }
 
 function resolveUserAccessUpdate(session, targetUser, body) {
@@ -1600,14 +1652,14 @@ function normalizeRow(row, length) {
 function mapUser(row) {
   const accessStatus = normalizeAccessStatus(row.access_status, "active");
   const role = accessStatus === "active"
-    ? normalizeRole(row.role, "Dirigente")
+    ? normalizeRole(row.role, "Usuário")
     : "Pendente";
   return {
     id: row.id,
     name: row.name,
     email: row.email,
     role,
-    requestedRole: normalizeRequestedRole(row.requested_role || row.role, "Dirigente"),
+    requestedRole: normalizeRequestedRole(row.requested_role || row.role, "Usuário"),
     accessStatus,
     dirigenteNome: row.dirigente_nome || "",
     secretarios: parseSecretarios(row.secretarios_json),
@@ -1846,7 +1898,26 @@ function normalizeSecretaryRoleLabel(value) {
 }
 
 function logEmailNotification(to, subject, message) {
-  console.log(`[email pendente] Para: ${to} | Assunto: ${subject} | Mensagem: ${message}`);
+  const recipient = String(to || "").trim();
+  if (!recipient) return;
+
+  const textBody = String(message || "");
+  if (!EMAIL_ENABLED || !smtpTransporter) {
+    console.log(`[email pendente] Para: ${recipient} | Assunto: ${subject} | Mensagem: ${textBody}`);
+    return;
+  }
+
+  smtpTransporter.sendMail({
+    from: EMAIL_FROM,
+    to: recipient,
+    subject,
+    text: textBody,
+  }).catch((error) => {
+    console.log(
+      `[email pendente] Falha no envio SMTP (${error.message}). ` +
+      `Para: ${recipient} | Assunto: ${subject} | Mensagem: ${textBody}`
+    );
+  });
 }
 
 function normalizeOptionalId(value) {
