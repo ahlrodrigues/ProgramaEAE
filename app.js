@@ -34,8 +34,12 @@ const userMenu = document.querySelector("#user-menu");
 const userMenuPanel = document.querySelector("#user-menu-panel");
 const openCadastroButton = document.querySelector("#open-cadastro-button");
 const loginForm = document.querySelector("#login-form");
+const forgotPasswordToggle = document.querySelector("#forgot-password-toggle");
+const forgotPasswordForm = document.querySelector("#forgot-password-form");
+const resetPasswordForm = document.querySelector("#reset-password-form");
 const registerForm = document.querySelector("#register-form");
 const contactsForm = document.querySelector("#contacts-form");
+const changePasswordForm = document.querySelector("#change-password-form");
 const contactsSaveButton = contactsForm?.querySelector('button[type="submit"]');
 const contactsSummary = document.querySelector("#contacts-summary");
 const adminUsersSection = document.querySelector("#admin-users-section");
@@ -109,6 +113,7 @@ const shareProgramStatus = document.querySelector("#share-program-status");
 const TOKEN_KEY = "eae.api.token";
 const SHARE_TOKEN_QUERY_KEY = "shareToken";
 const SECRETARY_INVITE_TOKEN_QUERY_KEY = "secretaryInviteToken";
+const RESET_PASSWORD_TOKEN_QUERY_KEY = "resetPasswordToken";
 let pendingColumnWidthFrame = null;
 const pendingColumnIndexes = new Set();
 const MAX_TRAILING_EMPTY_ROWS = 20;
@@ -146,6 +151,7 @@ async function bootstrap() {
   const token = window.localStorage.getItem(TOKEN_KEY);
   if (!token) {
     renderLoggedOutState();
+    revealResetPasswordFormIfNeeded();
     return;
   }
 
@@ -166,6 +172,24 @@ async function bootstrap() {
 function getPublicShareTokenFromUrl() {
   const params = new URLSearchParams(window.location.search);
   return String(params.get(SHARE_TOKEN_QUERY_KEY) || "").trim();
+}
+
+function getResetPasswordTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return String(params.get(RESET_PASSWORD_TOKEN_QUERY_KEY) || "").trim();
+}
+
+function clearResetPasswordTokenFromUrl() {
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete(RESET_PASSWORD_TOKEN_QUERY_KEY);
+  window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+}
+
+function revealResetPasswordFormIfNeeded() {
+  const token = getResetPasswordTokenFromUrl();
+  if (!token || !resetPasswordForm) return;
+  resetPasswordForm.hidden = false;
+  if (forgotPasswordForm) forgotPasswordForm.hidden = true;
 }
 
 function getSecretaryInviteTokenFromUrl() {
@@ -348,17 +372,6 @@ function setupTabs() {
         return;
       }
 
-      if (targetPanel === "aprovacoes") {
-        if (canManageUserApprovals() || canInviteSecretaries()) {
-          try {
-            await loadReferenceData();
-          } catch (error) {
-            showToast("error", "Erro ao carregar aprovações", error.message);
-          }
-        }
-        return;
-      }
-
       if (targetPanel !== "programa") {
         return;
       }
@@ -420,6 +433,58 @@ function setupForms() {
     sessionChip?.setAttribute("aria-expanded", "false");
     renderLoggedOutState("Sessão encerrada.");
     activateTab("login");
+  });
+
+  forgotPasswordToggle?.addEventListener("click", () => {
+    if (!forgotPasswordForm) return;
+    forgotPasswordForm.hidden = !forgotPasswordForm.hidden;
+  });
+
+  forgotPasswordForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const payload = Object.fromEntries(new FormData(forgotPasswordForm).entries());
+      await apiRequest("/api/auth/forgot-password", {
+        method: "POST",
+        body: payload,
+      });
+      authNotice.textContent = "Se o e-mail estiver cadastrado, você receberá as instruções.";
+      showToast("success", "Recuperação de senha", "Se o e-mail estiver cadastrado, enviaremos o link.");
+      forgotPasswordForm.reset();
+      forgotPasswordForm.hidden = true;
+    } catch (error) {
+      authNotice.textContent = error.message;
+      showToast("error", "Erro na recuperação", error.message);
+    }
+  });
+
+  resetPasswordForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const token = getResetPasswordTokenFromUrl();
+    if (!token) {
+      authNotice.textContent = "Token de recuperação inválido.";
+      return;
+    }
+
+    try {
+      const formData = Object.fromEntries(new FormData(resetPasswordForm).entries());
+      await apiRequest("/api/auth/reset-password", {
+        method: "POST",
+        body: {
+          token,
+          password: formData.password,
+        },
+      });
+      clearResetPasswordTokenFromUrl();
+      resetPasswordForm.reset();
+      resetPasswordForm.hidden = true;
+      authNotice.textContent = "Senha redefinida com sucesso. Faça login com a nova senha.";
+      showToast("success", "Senha redefinida", "Sua nova senha já pode ser usada no login.");
+      activateTab("login");
+    } catch (error) {
+      authNotice.textContent = error.message;
+      showToast("error", "Erro ao redefinir senha", error.message);
+    }
   });
 
   newTurmaButton.addEventListener("click", () => {
@@ -630,6 +695,27 @@ function setupForms() {
     }
   });
 
+  changePasswordForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.session) {
+      activateTab("login");
+      return;
+    }
+    try {
+      const payload = Object.fromEntries(new FormData(changePasswordForm).entries());
+      await apiRequest("/api/auth/change-password", {
+        method: "POST",
+        body: payload,
+      });
+      changePasswordForm.reset();
+      contactsSummary.textContent = "Senha atualizada com sucesso.";
+      showToast("success", "Senha atualizada", "Sua senha foi alterada com sucesso.");
+    } catch (error) {
+      contactsSummary.textContent = error.message;
+      showToast("error", "Erro ao alterar senha", error.message);
+    }
+  });
+
   editContactsButton.addEventListener("click", () => {
     if (!state.session) {
       contactsSummary.textContent = "Faça login para editar o cadastro.";
@@ -644,7 +730,7 @@ function setupForms() {
   });
 
   adminUsersList?.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-user-save], [data-user-approve], [data-user-reject], [data-user-invite]");
+    const button = event.target.closest("[data-user-save], [data-user-invite]");
     if (!button) {
       return;
     }
@@ -657,11 +743,7 @@ function setupForms() {
           userId,
           turmaId: turmaSelect?.value,
         }
-      : button.dataset.userApprove
-      ? { action: "approve" }
-      : button.dataset.userReject
-        ? { action: "reject" }
-        : { role: select?.value };
+      : { role: select?.value };
 
     try {
       const response = await apiRequest(button.dataset.userInvite ? "/api/turma-invites" : `/api/users/${userId}`, {
@@ -690,11 +772,7 @@ function setupForms() {
       }
       const errorTitle = button.dataset.userInvite
         ? "Erro ao enviar convite"
-        : button.dataset.userApprove
-          ? "Erro ao aprovar perfil"
-          : button.dataset.userReject
-            ? "Erro ao rejeitar perfil"
-            : "Erro ao atualizar usuário";
+        : "Erro ao atualizar usuário";
       showToast("error", errorTitle, error.message);
     }
   });
@@ -2725,7 +2803,7 @@ function updateAccessControlledTabs() {
     const isAuthTab = target === "login" || target === "cadastro";
     tab.hidden = hasAppAccess() && isAuthTab;
     const requiresLogin = tab.dataset.tabTarget !== "login" && tab.dataset.tabTarget !== "cadastro";
-    const requiresApprovalAccess = tab.dataset.tabTarget === "aprovacoes";
+    const requiresApprovalAccess = false;
     const programType = getProgramTypeForTab(tab);
     const requiresMatchingTurma = Boolean(programType);
     const isDisabledForLogin = requiresLogin && !hasAppAccess();

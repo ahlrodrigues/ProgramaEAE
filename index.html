@@ -70,7 +70,6 @@
           <button class="tab" data-tab-target="programa-le" data-tab-panel-target="programa">
             Programa LE
           </button>
-          <button class="tab" data-tab-target="aprovacoes">Aprovações</button>
         </nav>
 
         <section class="panel is-active" data-tab-panel="login">
@@ -92,6 +91,31 @@
               <input type="password" name="password" placeholder="Digite sua senha" required />
             </label>
             <button type="submit" class="primary-action">Entrar</button>
+            <button id="forgot-password-toggle" type="button" class="ghost-action">Esqueci minha senha</button>
+          </form>
+
+          <form id="forgot-password-form" class="card-grid" hidden>
+            <div class="inline-title">
+              <h4>Recuperar senha</h4>
+              <p>Informe seu e-mail para receber o link de redefinição.</p>
+            </div>
+            <label>
+              <span>E-mail</span>
+              <input type="email" name="email" placeholder="gestao@escola.org" required />
+            </label>
+            <button type="submit" class="primary-action">Enviar link de recuperação</button>
+          </form>
+
+          <form id="reset-password-form" class="card-grid" hidden>
+            <div class="inline-title">
+              <h4>Definir nova senha</h4>
+              <p>Digite uma nova senha para concluir a recuperação.</p>
+            </div>
+            <label>
+              <span>Nova senha</span>
+              <input type="password" name="password" placeholder="Mínimo de 6 caracteres" required />
+            </label>
+            <button type="submit" class="primary-action">Redefinir senha</button>
           </form>
 
           <div class="saved-summary access-summary">
@@ -189,53 +213,24 @@
           <div class="saved-summary" id="contacts-summary">
             Selecione uma turma para cadastrar dirigente, secretários e contatos.
           </div>
-        </section>
 
-        <section class="panel" data-tab-panel="aprovacoes">
-          <div class="section-head">
-            <div>
-              <span class="eyebrow">Acessos</span>
-              <h3 id="approvals-panel-title">Aprovações e convites</h3>
+          <form id="change-password-form" class="card-grid two-columns stack-card">
+            <div class="inline-title">
+              <h4>Alterar senha</h4>
+              <p>Atualize sua senha de acesso.</p>
             </div>
-            <p id="approvals-panel-description">Solicitações de perfil e convites de turma visíveis para dirigentes aprovados.</p>
-          </div>
-          <div class="approvals-subtabs" id="approvals-subtabs">
-            <button type="button" class="ghost-action is-active" data-approvals-view="cadastros">Cadastros sem vínculo</button>
-            <button type="button" class="ghost-action" data-approvals-view="vinculos">Vínculos com turma</button>
-          </div>
-
-          <section id="admin-users-section" class="saved-summary admin-users-section">
-            <div class="section-head section-head-compact">
-              <div>
-                <span class="eyebrow" id="admin-users-eyebrow">Solicitações</span>
-                <h4 id="admin-users-title">Perfis pendentes</h4>
-              </div>
-              <p id="admin-users-description">Aprove solicitações de dirigente e acompanhe usuários cadastrados.</p>
+            <label>
+              <span>Senha atual</span>
+              <input type="password" name="currentPassword" placeholder="Informe sua senha atual" required />
+            </label>
+            <label>
+              <span>Nova senha</span>
+              <input type="password" name="newPassword" placeholder="Mínimo de 6 caracteres" required />
+            </label>
+            <div class="inline-actions form-inline-actions">
+              <button type="submit" class="primary-action">Salvar nova senha</button>
             </div>
-            <div id="admin-users-list" class="admin-users-list"></div>
-          </section>
-
-          <section id="access-history-section" class="saved-summary admin-users-section">
-            <div class="section-head section-head-compact">
-              <div>
-                <span class="eyebrow">Histórico</span>
-                <h4>Registro de aprovações e convites</h4>
-              </div>
-              <p>Mostra quem aprovou cada perfil; convites de turma entrarão aqui na próxima etapa.</p>
-            </div>
-            <div id="access-history-list" class="admin-users-list"></div>
-          </section>
-
-          <section id="link-requests-section" class="saved-summary admin-users-section">
-            <div class="section-head section-head-compact">
-              <div>
-                <span class="eyebrow">Solicitações</span>
-                <h4>Solicitações de vínculo de secretário</h4>
-              </div>
-              <p>Aprove ou rejeite solicitações de secretários para turmas ativas sob sua responsabilidade.</p>
-            </div>
-            <div id="link-requests-list" class="admin-users-list"></div>
-          </section>
+          </form>
         </section>
 
         <section class="panel" data-tab-panel="turmas">

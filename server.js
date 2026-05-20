@@ -64,6 +64,29 @@ const insertSession = db.prepare(`
   VALUES (?, ?)
 `);
 
+const insertPasswordResetTokenStmt = db.prepare(`
+  INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+  VALUES (?, ?, ?)
+`);
+
+const getPasswordResetTokenByHashStmt = db.prepare(`
+  SELECT id, user_id, token_hash, expires_at, used_at
+  FROM password_reset_tokens
+  WHERE token_hash = ?
+`);
+
+const usePasswordResetTokenStmt = db.prepare(`
+  UPDATE password_reset_tokens
+  SET used_at = CURRENT_TIMESTAMP
+  WHERE id = ? AND used_at IS NULL
+`);
+
+const purgeExpiredPasswordResetTokensStmt = db.prepare(`
+  DELETE FROM password_reset_tokens
+  WHERE used_at IS NOT NULL
+     OR expires_at < CURRENT_TIMESTAMP
+`);
+
 const deleteSessionStmt = db.prepare(`
   DELETE FROM sessions
   WHERE token = ?
@@ -296,6 +319,12 @@ const updateUserProfileStmt = db.prepare(`
 const updateUserRoleStmt = db.prepare(`
   UPDATE users
   SET role = ?, requested_role = ?, access_status = ?
+  WHERE id = ?
+`);
+
+const updateUserPasswordStmt = db.prepare(`
+  UPDATE users
+  SET password_hash = ?
   WHERE id = ?
 `);
 
@@ -662,6 +691,58 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/auth/forgot-password") {
+    const body = await readJsonBody(request);
+    const email = normalizeEmail(body.email);
+    const user = getUserByEmail.get(email);
+
+    if (user) {
+      const rawToken = crypto.randomUUID();
+      const tokenHash = hashOpaqueToken(rawToken);
+      const expiresAt = buildFutureTimestampMinutes(30);
+      insertPasswordResetTokenStmt.run(user.id, tokenHash, expiresAt);
+      logEmailNotification(
+        user.email,
+        "Recuperação de senha",
+        `Para redefinir sua senha, acesse: ${buildPasswordResetUrl(request, rawToken)}`
+      );
+    }
+
+    sendJson(response, 200, {
+      success: true,
+      message: "Se o e-mail estiver cadastrado, você receberá as instruções de recuperação.",
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/auth/reset-password") {
+    const body = await readJsonBody(request);
+    const token = requireField(body.token, "Token de recuperação inválido.");
+    const password = requireField(body.password, "Informe a nova senha.");
+    if (password.length < 6) {
+      sendJson(response, 400, { error: "A senha deve ter pelo menos 6 caracteres." });
+      return;
+    }
+
+    const tokenHash = hashOpaqueToken(token);
+    const tokenRow = getPasswordResetTokenByHashStmt.get(tokenHash);
+    if (!tokenRow || tokenRow.used_at) {
+      sendJson(response, 400, { error: "Token de recuperação inválido ou já utilizado." });
+      return;
+    }
+
+    if (isTimestampExpired(tokenRow.expires_at)) {
+      sendJson(response, 410, { error: "Token de recuperação expirado." });
+      return;
+    }
+
+    const passwordHash = hashPassword(password);
+    updateUserPasswordStmt.run(passwordHash, tokenRow.user_id);
+    usePasswordResetTokenStmt.run(tokenRow.id);
+    sendJson(response, 200, { success: true });
+    return;
+  }
+
   const session = authenticate(request);
   if (!session) {
     sendJson(response, 401, { error: "Sessão inválida ou ausente." });
@@ -671,6 +752,26 @@ async function handleApi(request, response, url) {
   if (request.method === "POST" && url.pathname === "/api/auth/logout") {
     const deleted = deleteSessionStmt.run(session.token);
     sendJson(response, 200, { success: deleted.changes > 0 });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/auth/change-password") {
+    const body = await readJsonBody(request);
+    const currentPassword = requireField(body.currentPassword, "Informe a senha atual.");
+    const nextPassword = requireField(body.newPassword, "Informe a nova senha.");
+    if (nextPassword.length < 6) {
+      sendJson(response, 400, { error: "A nova senha deve ter pelo menos 6 caracteres." });
+      return;
+    }
+
+    const user = getUserByEmail.get(normalizeEmail(session.email));
+    if (!user || !verifyPassword(currentPassword, user.password_hash)) {
+      sendJson(response, 401, { error: "Senha atual inválida." });
+      return;
+    }
+
+    updateUserPasswordStmt.run(hashPassword(nextPassword), session.id);
+    sendJson(response, 200, { success: true });
     return;
   }
 
@@ -1192,6 +1293,16 @@ function initializeDatabase() {
       FOREIGN KEY (decided_by_user_id) REFERENCES users (id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS turma_members (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       turma_id INTEGER NOT NULL,
@@ -1320,6 +1431,10 @@ function initializeDatabase() {
     ON turma_link_requests (requester_user_id, status, turma_id);
   `);
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
+    ON password_reset_tokens (user_id, created_at);
+  `);
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_turma_secretary_invite_links_lookup
     ON turma_secretary_invite_links (turma_id, invited_email, status, created_at);
   `);
@@ -1334,6 +1449,7 @@ function initializeDatabase() {
     WHERE updated_at IS NULL OR updated_at = '';
   `);
   purgeOldSecretaryInviteLinksStmt.run(`-${SECRETARY_INVITE_RETENTION_DAYS} days`);
+  purgeExpiredPasswordResetTokensStmt.run();
   db.exec(`
     UPDATE turmas
     SET status = CASE
@@ -2185,6 +2301,30 @@ function buildSecretaryInviteUrl(request, token) {
     ? "http"
     : "https";
   return `${protocol}://${host}/?secretaryInviteToken=${encodeURIComponent(token)}`;
+}
+
+function buildPasswordResetUrl(request, token) {
+  const host = request.headers.host || `127.0.0.1:${PORT}`;
+  const protocol = host.includes("localhost") || host.startsWith("127.0.0.1")
+    ? "http"
+    : "https";
+  return `${protocol}://${host}/?resetPasswordToken=${encodeURIComponent(token)}`;
+}
+
+function hashOpaqueToken(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function buildFutureTimestampMinutes(minutes) {
+  const date = new Date(Date.now() + (minutes * 60 * 1000));
+  return date.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function isTimestampExpired(value) {
+  if (!value) return true;
+  const parsed = new Date(String(value).replace(" ", "T"));
+  if (Number.isNaN(parsed.getTime())) return true;
+  return Date.now() > parsed.getTime();
 }
 
 function buildSecretaryInviteExpirationTimestamp() {
