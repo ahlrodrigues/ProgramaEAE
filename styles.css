@@ -472,6 +472,39 @@ body.is-public-share-mode .page-shell {
   align-items: end;
 }
 
+.secretary-row-pending {
+  border: 1px solid rgba(22, 33, 29, 0.14);
+  border-radius: var(--radius-md);
+  background: #fffdf9;
+  padding: 10px 12px;
+}
+
+.secretary-row-pending-fields {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.secretary-pending-meta {
+  font-size: 0.92rem;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.secretary-pending-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(160, 106, 0, 0.28);
+  background: rgba(246, 176, 51, 0.16);
+  color: #7a4a00;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
 .secretary-input-group {
   min-width: 0;
 }
@@ -491,6 +524,10 @@ body.is-public-share-mode .page-shell {
 
 @media (max-width: 820px) {
   .secretary-row-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .secretary-row-pending-fields {
     grid-template-columns: 1fr;
   }
 }

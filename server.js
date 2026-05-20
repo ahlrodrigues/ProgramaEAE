@@ -547,6 +547,12 @@ const getPendingSecretaryInviteLinkByTurmaAndEmailStmt = db.prepare(`
   LIMIT 1
 `);
 
+const listPendingSecretaryInviteLinksByTurmaStmt = db.prepare(`
+  SELECT id, invited_email
+  FROM turma_secretary_invite_links
+  WHERE turma_id = ? AND status = 'pending'
+`);
+
 const insertSecretaryInviteLinkStmt = db.prepare(`
   INSERT INTO turma_secretary_invite_links (
     turma_id, invited_email, invited_name, invited_by_user_id, token, status, expires_at
@@ -569,6 +575,12 @@ const acceptSecretaryInviteLinkStmt = db.prepare(`
 const expireSecretaryInviteLinkStmt = db.prepare(`
   UPDATE turma_secretary_invite_links
   SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
+const cancelSecretaryInviteLinkStmt = db.prepare(`
+  UPDATE turma_secretary_invite_links
+  SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `);
 
@@ -1886,6 +1898,15 @@ function syncSecretaryInviteLinksForTurma(request, session, turma, secretarios) 
     }));
 
   const seen = new Set();
+  const candidateEmails = new Set(candidates.map((candidate) => candidate.email));
+  const currentPending = listPendingSecretaryInviteLinksByTurmaStmt.all(turma.id);
+  currentPending.forEach((pending) => {
+    const pendingEmail = normalizeEmail(pending.invited_email);
+    if (!candidateEmails.has(pendingEmail)) {
+      cancelSecretaryInviteLinkStmt.run(pending.id);
+    }
+  });
+
   candidates.forEach((candidate) => {
     if (seen.has(candidate.email)) return;
     seen.add(candidate.email);
@@ -1896,6 +1917,7 @@ function syncSecretaryInviteLinksForTurma(request, session, turma, secretarios) 
 
     const existingPending = getPendingSecretaryInviteLinkByTurmaAndEmailStmt.get(turma.id, candidate.email);
     const token = existingPending?.token || crypto.randomUUID();
+    let shouldSendEmail = false;
     if (!existingPending) {
       const expiresAt = buildSecretaryInviteExpirationTimestamp();
       insertSecretaryInviteLinkStmt.run(
@@ -1906,19 +1928,22 @@ function syncSecretaryInviteLinksForTurma(request, session, turma, secretarios) 
         token,
         expiresAt
       );
+      shouldSendEmail = true;
     }
 
-    const inviteUrl = buildSecretaryInviteUrl(request, token);
-    const secretaryInviteEmail = buildSecretaryInviteEmail({
-      secretaryName: candidate.name,
-      turmaName: turma.nome,
-      turmaType: turma.tipo,
-      inviterName: session.name,
-      inviteUrl,
-      expirationHours: SECRETARY_INVITE_EXPIRATION_HOURS,
-      expiresAt: buildSecretaryInviteExpirationTimestamp(),
-    });
-    logEmailNotification(candidate.email, secretaryInviteEmail.subject, secretaryInviteEmail.body);
+    if (shouldSendEmail) {
+      const inviteUrl = buildSecretaryInviteUrl(request, token);
+      const secretaryInviteEmail = buildSecretaryInviteEmail({
+        secretaryName: candidate.name,
+        turmaName: turma.nome,
+        turmaType: turma.tipo,
+        inviterName: session.name,
+        inviteUrl,
+        expirationHours: SECRETARY_INVITE_EXPIRATION_HOURS,
+        expiresAt: buildSecretaryInviteExpirationTimestamp(),
+      });
+      logEmailNotification(candidate.email, secretaryInviteEmail.subject, secretaryInviteEmail.body);
+    }
   });
 }
 

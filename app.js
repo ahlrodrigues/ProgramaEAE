@@ -522,7 +522,12 @@ function setupForms() {
   });
 
   addTurmaSecretaryButton?.addEventListener("click", () => {
-    appendSecretaryField(turmaSecretariesList, "");
+    const existingDraft = turmaSecretariesList.querySelector('.secretary-row[data-secretary-state="draft"]');
+    if (!existingDraft) {
+      appendSecretaryDraftField(turmaSecretariesList, {});
+    } else {
+      existingDraft.querySelector('input[name="secretarioNome"]')?.focus();
+    }
     scheduleTurmaAutosave();
   });
 
@@ -1173,7 +1178,7 @@ function renderTurmaForm(turma = null) {
     turmaForm.elements.status.value = "ativo";
     turmaForm.elements.horarioInicio.value = "";
     syncTurmaWeekdayField("");
-    appendSecretaryField(turmaSecretariesList);
+    appendSecretaryDraftField(turmaSecretariesList);
     studentsImportFeedback.textContent = "";
     renderTurmaFormButtons(null);
     renderStudentsPanel();
@@ -1190,8 +1195,9 @@ function renderTurmaForm(turma = null) {
   syncTurmaWeekdayField(turma.inicio || "");
   const secretarios = Array.isArray(turma.secretarios) && turma.secretarios.length
     ? turma.secretarios
-    : [{}];
-  secretarios.forEach((secretario) => appendSecretaryField(turmaSecretariesList, secretario));
+    : [];
+  secretarios.forEach((secretario) => appendSecretaryPendingRow(turmaSecretariesList, secretario));
+  appendSecretaryDraftField(turmaSecretariesList);
   studentsImportFeedback.textContent = "";
   renderTurmaFormButtons(turma);
   renderStudentsPanel(turma);
@@ -1892,10 +1898,11 @@ function setContactsFormLocked(locked) {
   }
 }
 
-function appendSecretaryField(listElement, value = {}) {
+function appendSecretaryDraftField(listElement, value = {}) {
   const secretary = normalizeSecretaryEntry(value);
   const wrapper = document.createElement("div");
-  wrapper.className = "secretary-row";
+  wrapper.className = "secretary-row secretary-row-draft";
+  wrapper.dataset.secretaryState = "draft";
 
   const fields = document.createElement("div");
   fields.className = "secretary-row-fields";
@@ -1942,10 +1949,17 @@ function appendSecretaryField(listElement, value = {}) {
   removeButton.textContent = "Remover";
   removeButton.addEventListener("click", () => {
     wrapper.remove();
-    if (!listElement.children.length) {
-      appendSecretaryField(listElement);
+    if (!listElement.querySelector('.secretary-row[data-secretary-state="draft"]')) {
+      appendSecretaryDraftField(listElement);
     }
     scheduleTurmaAutosave();
+  });
+
+  const inputs = [nameInput, messengerInput, emailInput];
+  inputs.forEach((input) => {
+    input.addEventListener("blur", () => {
+      tryFinalizeSecretaryDraftRow(wrapper);
+    });
   });
 
   fields.appendChild(nameField);
@@ -1953,15 +1967,91 @@ function appendSecretaryField(listElement, value = {}) {
   fields.appendChild(emailField);
   fields.appendChild(removeButton);
   wrapper.appendChild(fields);
+  const firstPendingRow = listElement.querySelector('.secretary-row[data-secretary-state="pending"]');
+  if (firstPendingRow) {
+    listElement.insertBefore(wrapper, firstPendingRow);
+  } else {
+    listElement.appendChild(wrapper);
+  }
+}
+
+function appendSecretaryPendingRow(listElement, value = {}) {
+  const secretary = normalizeSecretaryEntry(value);
+  const wrapper = document.createElement("div");
+  wrapper.className = "secretary-row secretary-row-pending";
+  wrapper.dataset.secretaryState = "pending";
+  wrapper.dataset.nome = secretary.nome;
+  wrapper.dataset.whatsapp = secretary.whatsapp;
+  wrapper.dataset.email = secretary.email;
+
+  const fields = document.createElement("div");
+  fields.className = "secretary-row-fields secretary-row-pending-fields";
+
+  const meta = document.createElement("div");
+  meta.className = "secretary-pending-meta";
+  meta.textContent = `${secretary.nome || "Sem nome"} · ${secretary.whatsapp || "Sem mensageiro"} · ${secretary.email || "Sem e-mail"}`;
+
+  const badge = document.createElement("span");
+  badge.className = "secretary-pending-badge";
+  badge.textContent = "Aguardando aceite";
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "ghost-action remove-secretary-button";
+  removeButton.textContent = "Remover convite";
+  removeButton.addEventListener("click", () => {
+    wrapper.remove();
+    scheduleTurmaAutosave();
+  });
+
+  fields.appendChild(meta);
+  fields.appendChild(badge);
+  fields.appendChild(removeButton);
+  wrapper.appendChild(fields);
   listElement.appendChild(wrapper);
 }
 
+function isSecretaryDraftComplete(rowElement) {
+  const name = String(rowElement.querySelector('input[name="secretarioNome"]')?.value || "").trim();
+  const whatsapp = String(rowElement.querySelector('input[name="secretarioWhatsapp"]')?.value || "").trim();
+  const email = String(rowElement.querySelector('input[name="secretarioEmail"]')?.value || "").trim();
+  return Boolean(name && whatsapp && email && isValidEmail(email));
+}
+
+function tryFinalizeSecretaryDraftRow(rowElement) {
+  if (!rowElement || rowElement.dataset.secretaryState !== "draft") {
+    return;
+  }
+  if (!isSecretaryDraftComplete(rowElement)) {
+    return;
+  }
+
+  const secretary = {
+    nome: String(rowElement.querySelector('input[name="secretarioNome"]')?.value || "").trim(),
+    whatsapp: String(rowElement.querySelector('input[name="secretarioWhatsapp"]')?.value || "").trim(),
+    email: String(rowElement.querySelector('input[name="secretarioEmail"]')?.value || "").trim(),
+  };
+  const normalizedEmail = secretary.email.toLowerCase();
+  const alreadyPending = Array.from(
+    turmaSecretariesList.querySelectorAll('.secretary-row[data-secretary-state="pending"]')
+  ).some((row) => String(row.dataset.email || "").trim().toLowerCase() === normalizedEmail);
+  if (alreadyPending) {
+    rowElement.remove();
+    appendSecretaryDraftField(turmaSecretariesList);
+    return;
+  }
+  appendSecretaryPendingRow(turmaSecretariesList, secretary);
+  rowElement.remove();
+  appendSecretaryDraftField(turmaSecretariesList);
+  scheduleTurmaAutosave();
+}
+
 function collectSecretaryValues(listElement) {
-  return Array.from(listElement.querySelectorAll(".secretary-row"))
+  return Array.from(listElement.querySelectorAll('.secretary-row[data-secretary-state="pending"]'))
     .map((row) => ({
-      nome: String(row.querySelector('input[name="secretarioNome"]')?.value || "").trim(),
-      whatsapp: String(row.querySelector('input[name="secretarioWhatsapp"]')?.value || "").trim(),
-      email: String(row.querySelector('input[name="secretarioEmail"]')?.value || "").trim(),
+      nome: String(row.dataset.nome || "").trim(),
+      whatsapp: String(row.dataset.whatsapp || "").trim(),
+      email: String(row.dataset.email || "").trim(),
     }))
     .filter((secretario) => secretario.nome || secretario.whatsapp || secretario.email);
 }
