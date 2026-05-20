@@ -1,5 +1,6 @@
 const state = {
   session: null,
+  isPublicShareMode: false,
   users: [],
   accessEvents: [],
   pendingInvites: [],
@@ -18,6 +19,10 @@ const state = {
   importedStudents: [],
   program: createMinimalProgram(),
   isProgramEditing: false,
+  currentProgramShareUrl: "",
+  currentProgramShareTurmaId: null,
+  isProgramShareLoading: false,
+  currentProgramShareError: "",
   isContactsEditing: false,
   manualColumnWidths: {},
 };
@@ -81,6 +86,7 @@ const studentsImportFeedback = document.querySelector("#students-import-feedback
 const turmaWeekdayInput = document.querySelector("#turma-weekday");
 const toastRegion = document.querySelector("#toast-region");
 const titleInput = document.querySelector("#program-title");
+const classNumberInput = document.querySelector("#program-class-number");
 const startDateInput = document.querySelector("#program-start-date");
 const endDateInput = document.querySelector("#program-end-date");
 const table = document.querySelector("#program-table");
@@ -95,8 +101,14 @@ const deleteProgramButton = document.querySelector("#delete-program");
 const exportMenu = document.querySelector("#export-menu");
 const exportExcelButton = document.querySelector("#export-excel");
 const exportPdfButton = document.querySelector("#export-pdf");
+const shareProgramCard = document.querySelector("#share-program-card");
+const shareProgramUrlInput = document.querySelector("#share-program-url");
+const copyShareProgramLinkButton = document.querySelector("#copy-share-program-link");
+const openShareProgramLink = document.querySelector("#open-share-program-link");
+const shareProgramStatus = document.querySelector("#share-program-status");
 
 const TOKEN_KEY = "eae.api.token";
+const SHARE_TOKEN_QUERY_KEY = "shareToken";
 let pendingColumnWidthFrame = null;
 const pendingColumnIndexes = new Set();
 const MAX_TRAILING_EMPTY_ROWS = 20;
@@ -125,6 +137,12 @@ setupProgramActions();
 bootstrap();
 
 async function bootstrap() {
+  const shareToken = getPublicShareTokenFromUrl();
+  if (shareToken) {
+    await bootstrapPublicShareMode(shareToken);
+    return;
+  }
+
   const token = window.localStorage.getItem(TOKEN_KEY);
   if (!token) {
     renderLoggedOutState();
@@ -141,6 +159,65 @@ async function bootstrap() {
   } catch (error) {
     window.localStorage.removeItem(TOKEN_KEY);
     renderLoggedOutState("Sua sessão expirou. Faça login novamente.");
+  }
+}
+
+function getPublicShareTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return String(params.get(SHARE_TOKEN_QUERY_KEY) || "").trim();
+}
+
+async function bootstrapPublicShareMode(token) {
+  state.isPublicShareMode = true;
+  document.body.classList.add("is-public-share-mode");
+  state.currentProgramShareUrl = "";
+  state.currentProgramShareTurmaId = null;
+  state.isProgramShareLoading = false;
+  state.currentProgramShareError = "";
+
+  try {
+    const response = await window.fetch(`/api/public/programa/${encodeURIComponent(token)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || "Não foi possível carregar o programa compartilhado.");
+    }
+
+    const turma = data.turma || null;
+    const program = data.program || null;
+    if (!turma || !program) {
+      throw new Error("Programa compartilhado inválido.");
+    }
+
+    state.session = {
+      id: 0,
+      name: "Visualização pública",
+      role: "Visitante",
+      accessStatus: "active",
+      requestedRole: "Visitante",
+    };
+    state.turmas = [turma];
+    state.currentTurmaId = turma.id;
+    state.currentProgramTab = getProgramTabForTurmaType(turma.tipo) || "programa-cb";
+    state.program = removePublicContatoColumn(resolveProgramForActiveTab(program));
+    state.isProgramEditing = false;
+    state.isCreatingTurma = false;
+    state.isTurmaDetailsOpen = false;
+    state.isEditingTurma = false;
+    state.importedStudents = Array.isArray(turma.alunos) ? turma.alunos : [];
+    state.activeTurmasForCopy = [];
+
+    renderSession();
+    renderTurmaList();
+    renderTurmaForm();
+    renderContactsForm();
+    renderProgram();
+    renderTurmaActions();
+    renderContactsSummary();
+    turmaSummary.hidden = false;
+    renderTurmaSummary(turma);
+    activateTab(state.currentProgramTab);
+  } catch (error) {
+    renderLoggedOutState(error.message || "Não foi possível abrir o link compartilhado.");
   }
 }
 
@@ -196,6 +273,9 @@ function setupTabs() {
   tabs.forEach((tab) => {
     tab.addEventListener("click", async () => {
       if (tab.disabled) return;
+      if (state.isPublicShareMode && tab.dataset.tabPanelTarget !== "programa" && tab.dataset.tabTarget !== state.currentProgramTab) {
+        return;
+      }
       const targetPanel = tab.dataset.tabPanelTarget || tab.dataset.tabTarget;
       if (targetPanel === "programa" && tab.dataset.tabTarget) {
         state.currentProgramTab = tab.dataset.tabTarget;
@@ -733,6 +813,7 @@ function setupProgramActions() {
     exportProgramToPdf();
     exportMenu?.removeAttribute("open");
   });
+  copyShareProgramLinkButton?.addEventListener("click", copyShareProgramLink);
   [titleInput, startDateInput, endDateInput].forEach((input) => {
     input.addEventListener("input", () => {
       syncProgramMeta();
@@ -872,6 +953,7 @@ async function selectTurma(turmaId) {
   renderTurmaForm(response.turma);
   renderContactsForm(response.turma);
   renderProgram();
+  await loadProgramShareLink(response.turma.id);
   turmaSummary.hidden = false;
   renderTurmaSummary(response.turma);
   renderTurmaActions(response.turma);
@@ -2584,6 +2666,17 @@ async function renderPendingAccessState() {
 }
 
 function updateAccessControlledTabs() {
+  if (state.isPublicShareMode) {
+    tabs.forEach((tab) => {
+      const isCurrentProgramTab = tab.dataset.tabTarget === state.currentProgramTab;
+      tab.hidden = !isCurrentProgramTab;
+      tab.disabled = !isCurrentProgramTab;
+      tab.classList.toggle("is-disabled", !isCurrentProgramTab);
+    });
+    logoutButton.hidden = true;
+    return;
+  }
+
   const selectedTurmaProgramType = getCurrentTurmaProgramType();
 
   tabs.forEach((tab) => {
@@ -2618,11 +2711,18 @@ function renderScopeButtons() {
 }
 
 function renderProgram() {
+  if (state.isPublicShareMode) {
+    state.program = removePublicContatoColumn(state.program);
+  }
   state.program = normalizeProgramStructure(state.program);
   state.program.meta.startDate = getProgramStartDateForCurrentTab(state.program.meta.startDate);
   syncProgramDateColumn();
   syncDerivedProgramEndDate();
   titleInput.value = state.program.meta.title || "";
+  if (classNumberInput) {
+    const currentTurma = findCurrentTurma();
+    classNumberInput.value = currentTurma?.nome || "";
+  }
   startDateInput.value = state.program.meta.startDate || "";
   endDateInput.value = state.program.meta.endDate || "";
 
@@ -2786,6 +2886,7 @@ function renderProgram() {
   const nextChildren = [colgroup, thead, tbody];
   table.replaceChildren(...nextChildren);
   updateProgramEditorLockState(isArchived);
+  renderProgramShareCard();
 }
 
 function syncProgramMeta() {
@@ -3010,6 +3111,31 @@ function getProgramTypeForTab(tab) {
   if (tabTarget === "programa-eae") return "EAE";
   if (tabTarget === "programa-le") return "LE";
   return null;
+}
+
+function removePublicContatoColumn(program) {
+  if (!program || !Array.isArray(program.headers) || !Array.isArray(program.rows)) {
+    return program;
+  }
+
+  const contatoIndex = program.headers.findIndex(
+    (header) => {
+      const label = String(header || "").trim().toLowerCase();
+      return label === "contato" || label.includes("contato") || label.includes("contat");
+    }
+  );
+  if (contatoIndex === -1) {
+    return program;
+  }
+
+  return {
+    ...program,
+    headers: program.headers.filter((_, index) => index !== contatoIndex),
+    rows: program.rows.map((row) => {
+      const safeRow = Array.isArray(row) ? row : [];
+      return safeRow.filter((_, index) => index !== contatoIndex);
+    }),
+  };
 }
 
 function getProgramTabForTurmaType(type) {
@@ -3378,7 +3504,7 @@ function refreshColumnDomMetadata() {
 }
 
 function updateProgramEditorLockState(isArchived) {
-  const isEditable = state.isProgramEditing && !isArchived;
+  const isEditable = state.isProgramEditing && !isArchived && !state.isPublicShareMode;
   const isProgramStartDateEditable = isEditable && state.currentProgramTab !== "programa-cb";
 
   table.classList.toggle("is-readonly", !isEditable);
@@ -3389,9 +3515,11 @@ function updateProgramEditorLockState(isArchived) {
   startDateInput.disabled = !isProgramStartDateEditable;
 
   if (editProgramButton) {
-    editProgramButton.disabled = isArchived;
+    editProgramButton.disabled = isArchived || state.isPublicShareMode;
     editProgramButton.classList.toggle("is-active", state.isProgramEditing && !isArchived);
     editProgramButton.setAttribute("aria-pressed", String(state.isProgramEditing && !isArchived));
+    editProgramButton.textContent = state.isProgramEditing && !isArchived ? "Visualizar" : "Editar";
+    editProgramButton.hidden = state.isPublicShareMode;
   }
 
   if (resetTemplateButton) resetTemplateButton.disabled = !isEditable;
@@ -3399,8 +3527,14 @@ function updateProgramEditorLockState(isArchived) {
   if (removeLastRowButton) removeLastRowButton.disabled = !isEditable || !state.program.rows.length;
   if (addColumnButton) addColumnButton.disabled = !isEditable;
   if (removeLastColumnButton) removeLastColumnButton.disabled = !isEditable || state.program.headers.length <= 1;
-  if (saveProgramButton) saveProgramButton.disabled = isArchived;
-  if (deleteProgramButton) deleteProgramButton.disabled = !isEditable;
+  if (saveProgramButton) {
+    saveProgramButton.hidden = state.currentProgramTab === "programa-cb";
+    saveProgramButton.disabled = isArchived || state.isPublicShareMode;
+  }
+  if (deleteProgramButton) {
+    deleteProgramButton.disabled = !isEditable;
+    deleteProgramButton.hidden = state.isPublicShareMode;
+  }
   if (exportMenu) {
     exportMenu.classList.toggle("is-disabled", isArchived);
     if (isArchived) {
@@ -3419,6 +3553,89 @@ function updateProgramEditorLockState(isArchived) {
   table.querySelectorAll("tbody .table-action-button").forEach((button) => {
     button.disabled = !isEditable;
   });
+}
+
+async function loadProgramShareLink(turmaId) {
+  state.currentProgramShareUrl = "";
+  state.currentProgramShareError = "";
+  state.currentProgramShareTurmaId = turmaId || null;
+  state.isProgramShareLoading = Boolean(turmaId);
+  renderProgramShareCard();
+  if (!turmaId || !hasAppAccess()) {
+    state.isProgramShareLoading = false;
+    return;
+  }
+
+  try {
+    const response = await apiRequest(`/api/turmas/${turmaId}/share-link`);
+    state.currentProgramShareUrl = response.url || "";
+    state.currentProgramShareError = "";
+  } catch (error) {
+    state.currentProgramShareUrl = "";
+    state.currentProgramShareError = error.message;
+  }
+  state.isProgramShareLoading = false;
+  renderProgramShareCard();
+}
+
+function renderProgramShareCard() {
+  if (!shareProgramCard) {
+    return;
+  }
+  if (state.isPublicShareMode) {
+    shareProgramCard.hidden = true;
+    return;
+  }
+
+  const hasTurma = Boolean(state.currentTurmaId);
+  shareProgramCard.hidden = !hasTurma;
+  if (!hasTurma) {
+    return;
+  }
+
+  const shouldLoad = hasAppAccess()
+    && !state.isProgramShareLoading
+    && (!state.currentProgramShareUrl || state.currentProgramShareTurmaId !== state.currentTurmaId)
+    && !state.currentProgramShareError;
+  if (shouldLoad) {
+    loadProgramShareLink(state.currentTurmaId);
+  }
+
+  const hasLink = Boolean(state.currentProgramShareUrl);
+  if (shareProgramUrlInput) {
+    shareProgramUrlInput.value = state.currentProgramShareUrl || "";
+  }
+  if (openShareProgramLink) {
+    openShareProgramLink.href = hasLink ? state.currentProgramShareUrl : "#";
+    openShareProgramLink.setAttribute("aria-disabled", String(!hasLink));
+  }
+  if (copyShareProgramLinkButton) {
+    copyShareProgramLinkButton.disabled = !hasLink;
+  }
+  if (shareProgramStatus) {
+    shareProgramStatus.textContent = state.isProgramShareLoading
+      ? "Gerando link de compartilhamento..."
+      : hasLink
+      ? "Link pronto para compartilhamento com visualização somente leitura."
+      : (state.currentProgramShareError || "Não foi possível gerar o link de compartilhamento para esta turma.");
+  }
+}
+
+async function copyShareProgramLink() {
+  const link = state.currentProgramShareUrl;
+  if (!link) return;
+  try {
+    await navigator.clipboard.writeText(link);
+    if (shareProgramStatus) {
+      shareProgramStatus.textContent = "Link copiado para a área de transferência.";
+    }
+    showToast("success", "Link copiado", "O link de visualização foi copiado.");
+  } catch (error) {
+    if (shareProgramStatus) {
+      shareProgramStatus.textContent = "Não foi possível copiar automaticamente. Copie manualmente o campo acima.";
+    }
+    showToast("error", "Falha ao copiar", "Copie manualmente o link no campo de compartilhamento.");
+  }
 }
 
 function normalizeAulasCellValue(value) {

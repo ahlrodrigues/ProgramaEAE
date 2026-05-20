@@ -323,6 +323,28 @@ h4 {
   gap: 10px;
 }
 
+#share-program-url {
+  min-width: 320px;
+  flex: 1;
+}
+
+#program-class-number {
+  max-width: 140px;
+}
+
+body.is-public-share-mode .hero-panel,
+body.is-public-share-mode .topbar-actions,
+body.is-public-share-mode .panel[data-tab-panel="login"],
+body.is-public-share-mode .panel[data-tab-panel="cadastro"],
+body.is-public-share-mode .panel[data-tab-panel="turmas"],
+body.is-public-share-mode .panel[data-tab-panel="aprovacoes"] {
+  display: none !important;
+}
+
+body.is-public-share-mode .page-shell {
+  display: block;
+}
+
 .form-inline-actions {
   align-items: center;
 }
@@ -804,18 +826,15 @@ textarea {
 
 .program-meta {
   margin-bottom: 16px;
-  grid-template-columns: minmax(220px, 33%) auto auto minmax(0, 1fr);
+  grid-template-columns: minmax(120px, 160px) minmax(320px, 1fr) auto auto;
   align-items: end;
   justify-content: start;
+  gap: 12px;
 }
 
 #program-title {
-  justify-self: start;
-}
-
-.program-meta > label:first-child {
-  width: 100%;
-  max-width: 100%;
+  justify-self: stretch;
+  min-width: 320px;
 }
 
 .program-meta-toolbar {

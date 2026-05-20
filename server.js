@@ -10,6 +10,7 @@ const PORT = Number(process.env.PORT || 3000);
 const ROOT_DIR = __dirname;
 const DATA_DIR = path.join(ROOT_DIR, "data");
 const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "eae.sqlite");
+const SHARE_LINK_SECRET = process.env.SHARE_LINK_SECRET || "eae-share-dev-secret-change-me";
 const ROLES = new Set(["Admin", "Dirigente", "Secretário", "Usuário", "Pendente"]);
 const REQUESTED_ROLES = new Set(["Dirigente", "Secretário"]);
 const ACCESS_STATUSES = new Set(["pending", "active", "rejected"]);
@@ -530,6 +531,33 @@ server.listen(PORT, HOST, () => {
 });
 
 async function handleApi(request, response, url) {
+  const publicProgramMatch = url.pathname.match(/^\/api\/public\/programa\/([^/]+)$/);
+  if (publicProgramMatch && request.method === "GET") {
+    const turmaId = resolvePublicProgramTurmaId(publicProgramMatch[1]);
+    if (!turmaId) {
+      sendJson(response, 404, { error: "Link de compartilhamento inválido." });
+      return;
+    }
+
+    const turma = getTurmaByIdStmt.get(turmaId);
+    if (!turma || turma.archived_at) {
+      sendJson(response, 404, { error: "Turma não encontrada para este link." });
+      return;
+    }
+
+    const programRow = getProgramStmt.get(turmaId);
+    if (!programRow) {
+      sendJson(response, 404, { error: "Programa não encontrado para esta turma." });
+      return;
+    }
+
+    sendJson(response, 200, {
+      turma: mapTurma(turma),
+      program: mapProgram(programRow),
+    });
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/auth/register") {
     const body = await readJsonBody(request);
     const name = requireField(body.name, "Informe o nome do usuário.");
@@ -956,6 +984,19 @@ async function handleApi(request, response, url) {
       sendJson(response, 200, { success: true });
       return;
     }
+  }
+
+  const shareLinkMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/share-link\/?$/);
+  if (shareLinkMatch && request.method === "GET") {
+    const turmaId = Number(shareLinkMatch[1]);
+    const turma = getTurmaOrFail(turmaId);
+    ensureTurmaAccess(session, turma);
+    const token = buildPublicProgramToken(turmaId);
+    sendJson(response, 200, {
+      token,
+      url: buildPublicProgramUrl(request, token),
+    });
+    return;
   }
 
   const archiveMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/archive$/);
@@ -1930,6 +1971,43 @@ function normalizeOptionalId(value) {
     throw error;
   }
   return parsed;
+}
+
+function buildPublicProgramToken(turmaId) {
+  const turmaValue = String(Number(turmaId) || "");
+  const signature = crypto
+    .createHmac("sha256", SHARE_LINK_SECRET)
+    .update(turmaValue)
+    .digest("base64url");
+  return `${turmaValue}.${signature}`;
+}
+
+function resolvePublicProgramTurmaId(token) {
+  const [turmaIdPart = "", signaturePart = ""] = String(token || "").split(".");
+  if (!/^\d+$/.test(turmaIdPart) || !signaturePart) {
+    return null;
+  }
+
+  const expectedToken = buildPublicProgramToken(Number(turmaIdPart));
+  const [_, expectedSignature] = expectedToken.split(".");
+  const receivedBuffer = Buffer.from(signaturePart);
+  const expectedBuffer = Buffer.from(expectedSignature);
+  if (receivedBuffer.length !== expectedBuffer.length) {
+    return null;
+  }
+  if (!crypto.timingSafeEqual(receivedBuffer, expectedBuffer)) {
+    return null;
+  }
+
+  return Number(turmaIdPart);
+}
+
+function buildPublicProgramUrl(request, token) {
+  const host = request.headers.host || `127.0.0.1:${PORT}`;
+  const protocol = host.includes("localhost") || host.startsWith("127.0.0.1")
+    ? "http"
+    : "https";
+  return `${protocol}://${host}/?shareToken=${encodeURIComponent(token)}`;
 }
 
 async function readJsonBody(request) {

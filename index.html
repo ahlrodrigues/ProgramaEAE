@@ -396,6 +396,10 @@
 
           <div class="program-meta card-grid three-columns">
             <label>
+              <span>Número da turma</span>
+              <input id="program-class-number" type="text" readonly />
+            </label>
+            <label>
               <span>Título do programa</span>
               <input id="program-title" type="text" placeholder="Programa anual da turma" />
             </label>
@@ -418,6 +422,19 @@
                 </div>
               </details>
             </div>
+          </div>
+
+          <div id="share-program-card" class="saved-summary stack-card" hidden>
+            <h4>Compartilhar Programa com Alunos</h4>
+            <p>
+              Use este link para divulgação do programa em modo somente leitura, sem necessidade de login.
+            </p>
+            <div class="inline-actions">
+              <input id="share-program-url" type="text" readonly aria-label="Link público do programa" />
+              <button id="copy-share-program-link" type="button" class="ghost-action">Copiar link</button>
+              <a id="open-share-program-link" href="#" target="_blank" rel="noopener">Abrir visualização</a>
+            </div>
+            <p id="share-program-status" class="list-hint">Selecione uma turma para gerar o link.</p>
           </div>
 
           <div class="table-wrapper">

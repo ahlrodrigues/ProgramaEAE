@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Programa da Turma</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="workspace">
+      <section class="section-head section-head-wide">
+        <h3 id="page-title">Programa da Turma</h3>
+        <p id="page-subtitle">Visualização pública em modo somente leitura.</p>
+      </section>
+
+      <div class="program-meta card-grid three-columns" id="program-meta" hidden>
+        <label>
+          <span>Título</span>
+          <input id="public-program-title" type="text" readonly />
+        </label>
+        <label>
+          <span>Data inicial</span>
+          <input id="public-program-start" type="text" readonly />
+        </label>
+        <label>
+          <span>Data final</span>
+          <input id="public-program-end" type="text" readonly />
+        </label>
+      </div>
+
+      <div class="table-wrapper" id="program-table-wrap" hidden>
+        <table id="public-program-table"></table>
+      </div>
+      <div class="saved-summary" id="public-status" hidden></div>
+    </main>
+
+    <script>
+      const statusBox = document.querySelector("#public-status");
+      const metaBox = document.querySelector("#program-meta");
+      const tableWrap = document.querySelector("#program-table-wrap");
+      const table = document.querySelector("#public-program-table");
+      const titleInput = document.querySelector("#public-program-title");
+      const startInput = document.querySelector("#public-program-start");
+      const endInput = document.querySelector("#public-program-end");
+      const pageTitle = document.querySelector("#page-title");
+      const pageSubtitle = document.querySelector("#page-subtitle");
+
+      function getToken() {
+        const params = new URLSearchParams(window.location.search);
+        return params.get("token") || "";
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function removeContatoColumn(headers, rows) {
+        const contatoIndex = headers.findIndex((header) => {
+          const label = String(header || "").trim().toLowerCase();
+          return label === "contato" || label.includes("contato") || label.includes("contat");
+        });
+        if (contatoIndex === -1) {
+          return { headers, rows };
+        }
+
+        const filteredHeaders = headers.filter((_, index) => index !== contatoIndex);
+        const filteredRows = rows.map((row) => row.filter((_, index) => index !== contatoIndex));
+        return { headers: filteredHeaders, rows: filteredRows };
+      }
+
+      function renderTable(headers, rows) {
+        const theadCells = headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+        const bodyRows = rows.map((row) => {
+          const cells = headers.map((_, index) => `<td>${escapeHtml(row[index] || "")}</td>`).join("");
+          return `<tr>${cells}</tr>`;
+        }).join("");
+
+        table.innerHTML = `
+          <thead><tr>${theadCells}</tr></thead>
+          <tbody>${bodyRows || "<tr><td colspan='1'>Nenhuma linha cadastrada.</td></tr>"}</tbody>
+        `;
+      }
+
+      async function bootstrap() {
+        const token = getToken();
+        if (!token) {
+          statusBox.textContent = "Link inválido: token ausente.";
+          return;
+        }
+
+        try {
+          const response = await fetch(`/api/public/programa/${encodeURIComponent(token)}`);
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(data.error || "Não foi possível carregar o programa.");
+          }
+
+          const turma = data.turma || {};
+          const program = data.program || {};
+          const meta = program.meta || {};
+          const headers = Array.isArray(program.headers) ? program.headers : [];
+          const rows = Array.isArray(program.rows) ? program.rows : [];
+          const publicProgram = removeContatoColumn(headers, rows);
+
+          pageTitle.textContent = `Programa da turma ${turma.nome || ""}`.trim();
+          pageSubtitle.textContent = `${turma.tipo || ""} · ${turma.modalidade || ""}`.trim();
+          titleInput.value = meta.title || "Programa da turma";
+          startInput.value = meta.startDate || "";
+          endInput.value = meta.endDate || "";
+          renderTable(publicProgram.headers, publicProgram.rows);
+
+          statusBox.hidden = true;
+          metaBox.hidden = false;
+          tableWrap.hidden = false;
+        } catch (error) {
+          statusBox.hidden = false;
+          statusBox.textContent = error.message;
+        }
+      }
+
+      bootstrap();
+    </script>
+  </body>
+</html>
