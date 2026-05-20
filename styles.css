@@ -394,6 +394,16 @@ body.is-public-share-mode .page-shell {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.full-row-field {
+  grid-column: 1 / -1;
+}
+
+#change-password-form .full-row-field input {
+  width: 25vw;
+  max-width: 360px;
+  min-width: 220px;
+}
+
 .schedule-fields-row {
   grid-column: 1 / -1;
   padding: 0;

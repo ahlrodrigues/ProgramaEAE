@@ -1448,8 +1448,16 @@ function initializeDatabase() {
     SET updated_at = COALESCE(updated_at, accepted_at, created_at, CURRENT_TIMESTAMP)
     WHERE updated_at IS NULL OR updated_at = '';
   `);
-  purgeOldSecretaryInviteLinksStmt.run(`-${SECRETARY_INVITE_RETENTION_DAYS} days`);
-  purgeExpiredPasswordResetTokensStmt.run();
+  db.exec(`
+    DELETE FROM turma_secretary_invite_links
+    WHERE status IN ('accepted', 'expired', 'cancelled')
+      AND COALESCE(updated_at, created_at) < datetime('now', '-${SECRETARY_INVITE_RETENTION_DAYS} days')
+  `);
+  db.exec(`
+    DELETE FROM password_reset_tokens
+    WHERE used_at IS NOT NULL
+       OR expires_at < CURRENT_TIMESTAMP
+  `);
   db.exec(`
     UPDATE turmas
     SET status = CASE
