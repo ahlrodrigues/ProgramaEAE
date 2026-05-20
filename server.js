@@ -25,6 +25,8 @@ const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "false").toLowerCase() === "true";
 const SMTP_USER = process.env.SMTP_USER || process.env.GMAIL_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || process.env.GMAIL_PASS || "";
+const SECRETARY_INVITE_EXPIRATION_HOURS = 48;
+const SECRETARY_INVITE_RETENTION_DAYS = 30;
 const smtpTransporter = EMAIL_ENABLED && SMTP_HOST && SMTP_USER && SMTP_PASS
   ? nodemailer.createTransport({
       host: SMTP_HOST,
@@ -508,6 +510,55 @@ const acceptTurmaInviteStmt = db.prepare(`
   WHERE id = ?
 `);
 
+const getPendingSecretaryInviteLinkByTurmaAndEmailStmt = db.prepare(`
+  SELECT id, token
+  FROM turma_secretary_invite_links
+  WHERE turma_id = ? AND lower(invited_email) = lower(?) AND status = 'pending'
+  ORDER BY created_at DESC
+  LIMIT 1
+`);
+
+const insertSecretaryInviteLinkStmt = db.prepare(`
+  INSERT INTO turma_secretary_invite_links (
+    turma_id, invited_email, invited_name, invited_by_user_id, token, status, expires_at
+  )
+  VALUES (?, ?, ?, ?, ?, 'pending', ?)
+`);
+
+const getSecretaryInviteLinkByTokenStmt = db.prepare(`
+  SELECT id, turma_id, invited_email, invited_name, invited_by_user_id, token, status, expires_at
+  FROM turma_secretary_invite_links
+  WHERE token = ?
+`);
+
+const acceptSecretaryInviteLinkStmt = db.prepare(`
+  UPDATE turma_secretary_invite_links
+  SET status = 'accepted', accepted_by_user_id = ?, accepted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
+const expireSecretaryInviteLinkStmt = db.prepare(`
+  UPDATE turma_secretary_invite_links
+  SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
+const getActiveTurmaMemberByEmailStmt = db.prepare(`
+  SELECT users.id
+  FROM turma_members
+  JOIN users ON users.id = turma_members.user_id
+  WHERE turma_members.turma_id = ?
+    AND turma_members.status = 'active'
+    AND lower(users.email) = lower(?)
+  LIMIT 1
+`);
+
+const purgeOldSecretaryInviteLinksStmt = db.prepare(`
+  DELETE FROM turma_secretary_invite_links
+  WHERE status IN ('accepted', 'expired', 'cancelled')
+    AND COALESCE(updated_at, created_at) < datetime('now', ?)
+`);
+
 ensureDefaultUsers();
 
 const server = http.createServer(async (request, response) => {
@@ -625,6 +676,46 @@ async function handleApi(request, response, url) {
 
   if (request.method === "GET" && url.pathname === "/api/session") {
     sendJson(response, 200, { user: mapUser(session) });
+    return;
+  }
+
+  const acceptSecretaryInviteLinkMatch = url.pathname.match(/^\/api\/secretary-invite-links\/([^/]+)\/accept$/);
+  if (acceptSecretaryInviteLinkMatch && request.method === "POST") {
+    const token = String(acceptSecretaryInviteLinkMatch[1] || "").trim();
+    const inviteLink = getSecretaryInviteLinkByTokenStmt.get(token);
+    if (!inviteLink || inviteLink.status !== "pending") {
+      sendJson(response, 404, { error: "Convite de secretário inválido ou expirado." });
+      return;
+    }
+
+    if (isSecretaryInviteExpired(inviteLink)) {
+      expireSecretaryInviteLinkStmt.run(inviteLink.id);
+      sendJson(response, 410, { error: "Este convite expirou. Solicite um novo vínculo ao dirigente." });
+      return;
+    }
+
+    const sessionEmail = normalizeEmail(session.email);
+    const invitedEmail = normalizeEmail(inviteLink.invited_email);
+    if (sessionEmail !== invitedEmail) {
+      sendJson(response, 403, { error: "Este convite foi emitido para outro e-mail." });
+      return;
+    }
+
+    const turma = getTurmaOrFail(inviteLink.turma_id);
+    if (turma.archived_at) {
+      sendJson(response, 409, { error: "Esta turma está arquivada e não aceita novos vínculos." });
+      return;
+    }
+
+    upsertTurmaMemberStmt.run(inviteLink.turma_id, session.id, "Secretário", inviteLink.invited_by_user_id || session.id);
+    promoteSessionUserToSecretaryIfNeeded(session);
+    acceptSecretaryInviteLinkStmt.run(session.id, inviteLink.id);
+
+    sendJson(response, 200, {
+      success: true,
+      turma: mapTurma(getTurmaOrFail(inviteLink.turma_id)),
+      user: mapUser(getUserById.get(session.id)),
+    });
     return;
   }
 
@@ -921,6 +1012,7 @@ async function handleApi(request, response, url) {
 
     const turma = getTurmaOrFail(Number(result.lastInsertRowid));
     ensureTurmaAccess(session, turma);
+    syncSecretaryInviteLinksForTurma(request, session, turma, payload.secretarios);
     sendJson(response, 201, { turma: mapTurma(turma) });
     return;
   }
@@ -970,6 +1062,7 @@ async function handleApi(request, response, url) {
         turmaId
       );
 
+      syncSecretaryInviteLinksForTurma(request, session, getTurmaOrFail(turmaId), payload.secretarios);
       sendJson(response, 200, { turma: mapTurma(getTurmaOrFail(turmaId)) });
       return;
     }
@@ -1141,6 +1234,24 @@ function initializeDatabase() {
       FOREIGN KEY (decided_by_user_id) REFERENCES users (id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS turma_secretary_invite_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      turma_id INTEGER NOT NULL,
+      invited_email TEXT NOT NULL,
+      invited_name TEXT,
+      invited_by_user_id INTEGER,
+      token TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      expires_at TEXT,
+      accepted_by_user_id INTEGER,
+      accepted_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (turma_id) REFERENCES turmas (id) ON DELETE CASCADE,
+      FOREIGN KEY (invited_by_user_id) REFERENCES users (id) ON DELETE SET NULL,
+      FOREIGN KEY (accepted_by_user_id) REFERENCES users (id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS turmas (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER NOT NULL,
@@ -1198,6 +1309,8 @@ function initializeDatabase() {
   ensureColumn("turmas", "email", "TEXT");
   ensureColumn("turmas", "horarios", "TEXT");
   ensureColumn("turmas", "alunos_json", "TEXT");
+  ensureColumn("turma_secretary_invite_links", "expires_at", "TEXT");
+  ensureColumn("turma_secretary_invite_links", "updated_at", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_turma_members_unique
     ON turma_members (turma_id, user_id);
@@ -1206,6 +1319,21 @@ function initializeDatabase() {
     CREATE INDEX IF NOT EXISTS idx_turma_link_requests_requester
     ON turma_link_requests (requester_user_id, status, turma_id);
   `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_turma_secretary_invite_links_lookup
+    ON turma_secretary_invite_links (turma_id, invited_email, status, created_at);
+  `);
+  db.exec(`
+    UPDATE turma_secretary_invite_links
+    SET expires_at = datetime(created_at, '+48 hours')
+    WHERE expires_at IS NULL OR expires_at = '';
+  `);
+  db.exec(`
+    UPDATE turma_secretary_invite_links
+    SET updated_at = COALESCE(updated_at, accepted_at, created_at, CURRENT_TIMESTAMP)
+    WHERE updated_at IS NULL OR updated_at = '';
+  `);
+  purgeOldSecretaryInviteLinksStmt.run(`-${SECRETARY_INVITE_RETENTION_DAYS} days`);
   db.exec(`
     UPDATE turmas
     SET status = CASE
@@ -1601,6 +1729,47 @@ function normalizeStudents(value) {
       whatsapp: optionalText(item?.whatsapp),
     }))
     .filter((item) => item.nome);
+}
+
+function syncSecretaryInviteLinksForTurma(request, session, turma, secretarios) {
+  const candidates = normalizeSecretarios(secretarios)
+    .filter((secretario) => secretario.email)
+    .map((secretario) => ({
+      email: normalizeEmail(secretario.email),
+      name: optionalText(secretario.nome),
+    }));
+
+  const seen = new Set();
+  candidates.forEach((candidate) => {
+    if (seen.has(candidate.email)) return;
+    seen.add(candidate.email);
+
+    if (getActiveTurmaMemberByEmailStmt.get(turma.id, candidate.email)) {
+      return;
+    }
+
+    const existingPending = getPendingSecretaryInviteLinkByTurmaAndEmailStmt.get(turma.id, candidate.email);
+    const token = existingPending?.token || crypto.randomUUID();
+    if (!existingPending) {
+      const expiresAt = buildSecretaryInviteExpirationTimestamp();
+      insertSecretaryInviteLinkStmt.run(
+        turma.id,
+        candidate.email,
+        candidate.name || null,
+        session.id,
+        token,
+        expiresAt
+      );
+    }
+
+    const inviteUrl = buildSecretaryInviteUrl(request, token);
+    logEmailNotification(
+      candidate.email,
+      `Confirmação de vínculo - turma ${turma.nome}`,
+      `Você foi indicado como secretário da turma ${turma.nome}. ` +
+      `Para confirmar seu vínculo, acesse: ${inviteUrl}`
+    );
+  });
 }
 
 function normalizeTurmaType(value, existingTurma) {
@@ -2008,6 +2177,30 @@ function buildPublicProgramUrl(request, token) {
     ? "http"
     : "https";
   return `${protocol}://${host}/?shareToken=${encodeURIComponent(token)}`;
+}
+
+function buildSecretaryInviteUrl(request, token) {
+  const host = request.headers.host || `127.0.0.1:${PORT}`;
+  const protocol = host.includes("localhost") || host.startsWith("127.0.0.1")
+    ? "http"
+    : "https";
+  return `${protocol}://${host}/?secretaryInviteToken=${encodeURIComponent(token)}`;
+}
+
+function buildSecretaryInviteExpirationTimestamp() {
+  const expiresAt = new Date(Date.now() + (SECRETARY_INVITE_EXPIRATION_HOURS * 60 * 60 * 1000));
+  return expiresAt.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function isSecretaryInviteExpired(inviteLink) {
+  if (!inviteLink?.expires_at) {
+    return false;
+  }
+  const expiresAt = new Date(String(inviteLink.expires_at).replace(" ", "T"));
+  if (Number.isNaN(expiresAt.getTime())) {
+    return false;
+  }
+  return Date.now() > expiresAt.getTime();
 }
 
 async function readJsonBody(request) {

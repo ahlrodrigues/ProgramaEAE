@@ -108,6 +108,7 @@ const shareProgramStatus = document.querySelector("#share-program-status");
 
 const TOKEN_KEY = "eae.api.token";
 const SHARE_TOKEN_QUERY_KEY = "shareToken";
+const SECRETARY_INVITE_TOKEN_QUERY_KEY = "secretaryInviteToken";
 let pendingColumnWidthFrame = null;
 const pendingColumnIndexes = new Set();
 const MAX_TRAILING_EMPTY_ROWS = 20;
@@ -152,6 +153,7 @@ async function bootstrap() {
     const session = await apiRequest("/api/session");
     state.session = session.user;
     renderSession();
+    await tryAcceptSecretaryInviteFromUrl();
     await loadReferenceData();
     await loadTurmas();
     activateTab("turmas");
@@ -164,6 +166,32 @@ async function bootstrap() {
 function getPublicShareTokenFromUrl() {
   const params = new URLSearchParams(window.location.search);
   return String(params.get(SHARE_TOKEN_QUERY_KEY) || "").trim();
+}
+
+function getSecretaryInviteTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return String(params.get(SECRETARY_INVITE_TOKEN_QUERY_KEY) || "").trim();
+}
+
+function clearSecretaryInviteTokenFromUrl() {
+  const nextUrl = new URL(window.location.href);
+  nextUrl.searchParams.delete(SECRETARY_INVITE_TOKEN_QUERY_KEY);
+  window.history.replaceState({}, "", `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`);
+}
+
+async function tryAcceptSecretaryInviteFromUrl() {
+  const token = getSecretaryInviteTokenFromUrl();
+  if (!token || !state.session) {
+    return null;
+  }
+
+  const response = await apiRequest(`/api/secretary-invite-links/${encodeURIComponent(token)}/accept`, {
+    method: "POST",
+  });
+  state.session = response.user || state.session;
+  clearSecretaryInviteTokenFromUrl();
+  renderSession();
+  return response;
 }
 
 async function bootstrapPublicShareMode(token) {
@@ -527,9 +555,18 @@ function setupForms() {
       state.session = response.user;
       loginForm.reset();
       renderSession();
+      const inviteAcceptance = await tryAcceptSecretaryInviteFromUrl();
       await loadReferenceData();
-      authNotice.textContent = "Login realizado com sucesso.";
-      showToast("success", "Login realizado", "Sua sessão foi iniciada com sucesso.");
+      authNotice.textContent = inviteAcceptance
+        ? `Vínculo confirmado na turma ${inviteAcceptance.turma?.nome || ""}.`
+        : "Login realizado com sucesso.";
+      showToast(
+        "success",
+        "Login realizado",
+        inviteAcceptance
+          ? "Seu vínculo como secretário foi confirmado com sucesso."
+          : "Sua sessão foi iniciada com sucesso."
+      );
       await loadTurmas();
       activateTab("turmas");
     } catch (error) {
@@ -553,9 +590,18 @@ function setupForms() {
       state.session = response.user;
       registerForm.reset();
       renderSession();
+      const inviteAcceptance = await tryAcceptSecretaryInviteFromUrl();
       await loadReferenceData();
-      authNotice.textContent = "Conta criada e sessão iniciada.";
-      showToast("success", "Conta criada", "Sua conta foi criada e a sessão já está ativa.");
+      authNotice.textContent = inviteAcceptance
+        ? `Conta criada e vínculo confirmado na turma ${inviteAcceptance.turma?.nome || ""}.`
+        : "Conta criada e sessão iniciada.";
+      showToast(
+        "success",
+        "Conta criada",
+        inviteAcceptance
+          ? "Conta criada e vínculo de secretário confirmado com sucesso."
+          : "Sua conta foi criada e a sessão já está ativa."
+      );
       await loadTurmas();
       activateTab("turmas");
     } catch (error) {
