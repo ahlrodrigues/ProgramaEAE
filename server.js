@@ -547,6 +547,22 @@ const getPendingSecretaryInviteLinkByTurmaAndEmailStmt = db.prepare(`
   LIMIT 1
 `);
 
+const getPendingSecretaryInviteLinkDetailsByTurmaAndEmailStmt = db.prepare(`
+  SELECT id, invited_email, invited_name, token, expires_at
+  FROM turma_secretary_invite_links
+  WHERE turma_id = ? AND lower(invited_email) = lower(?) AND status = 'pending'
+  ORDER BY created_at DESC
+  LIMIT 1
+`);
+
+const getLatestSecretaryInviteStatusByTurmaAndEmailStmt = db.prepare(`
+  SELECT status
+  FROM turma_secretary_invite_links
+  WHERE turma_id = ? AND lower(invited_email) = lower(?)
+  ORDER BY created_at DESC
+  LIMIT 1
+`);
+
 const listPendingSecretaryInviteLinksByTurmaStmt = db.prepare(`
   SELECT id, invited_email
   FROM turma_secretary_invite_links
@@ -1212,6 +1228,39 @@ async function handleApi(request, response, url) {
       sendJson(response, 200, { success: true });
       return;
     }
+  }
+
+  const resendSecretaryInviteMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/secretary-invites\/resend\/?$/);
+  if (resendSecretaryInviteMatch && request.method === "POST") {
+    const turmaId = Number(resendSecretaryInviteMatch[1]);
+    const turma = getTurmaOrFail(turmaId);
+    ensureTurmaAccess(session, turma);
+    if (turma.archived_at) {
+      sendJson(response, 409, { error: "Esta turma está arquivada e não aceita convites." });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const email = normalizeEmail(body.email);
+    const pendingInvite = getPendingSecretaryInviteLinkDetailsByTurmaAndEmailStmt.get(turmaId, email);
+    if (!pendingInvite) {
+      sendJson(response, 404, { error: "Convite pendente não encontrado para este e-mail." });
+      return;
+    }
+
+    const inviteUrl = buildSecretaryInviteUrl(request, pendingInvite.token);
+    const secretaryInviteEmail = buildSecretaryInviteEmail({
+      secretaryName: optionalText(pendingInvite.invited_name),
+      turmaName: turma.nome,
+      turmaType: turma.tipo,
+      inviterName: session.name,
+      inviteUrl,
+      expirationHours: SECRETARY_INVITE_EXPIRATION_HOURS,
+      expiresAt: pendingInvite.expires_at || buildSecretaryInviteExpirationTimestamp(),
+    });
+    logEmailNotification(email, secretaryInviteEmail.subject, secretaryInviteEmail.body);
+    sendJson(response, 200, { success: true });
+    return;
   }
 
   const shareLinkMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/share-link\/?$/);
@@ -2153,6 +2202,7 @@ function compareAccessEvents(a, b) {
 }
 
 function mapTurma(row) {
+  const secretarios = withSecretaryInviteStatus(row.id, parseSecretarios(row.secretarios_json));
   return {
     id: row.id,
     ownerUserId: row.user_id,
@@ -2171,13 +2221,40 @@ function mapTurma(row) {
     horarioInicio: row.horarios || "",
     alunos: row.alunos_json ? JSON.parse(row.alunos_json) : [],
     dirigenteNome: row.dirigente_nome || "",
-    secretarios: parseSecretarios(row.secretarios_json),
+    secretarios,
     telefone: row.telefone || "",
     whatsapp: row.whatsapp || "",
     email: row.email || "",
     archivedAt: row.archived_at || null,
     updatedAt: row.updated_at,
   };
+}
+
+function withSecretaryInviteStatus(turmaId, secretarios) {
+  return (Array.isArray(secretarios) ? secretarios : []).map((secretario) => {
+    const email = optionalText(secretario.email);
+    if (!email) {
+      return { ...secretario, inviteStatus: "none" };
+    }
+
+    if (getActiveTurmaMemberByEmailStmt.get(turmaId, email)) {
+      return { ...secretario, inviteStatus: "accepted" };
+    }
+
+    const invite = getLatestSecretaryInviteStatusByTurmaAndEmailStmt.get(turmaId, email);
+    const status = String(invite?.status || "").trim().toLowerCase();
+    if (status === "pending") {
+      return { ...secretario, inviteStatus: "pending" };
+    }
+    if (status === "expired") {
+      return { ...secretario, inviteStatus: "expired" };
+    }
+    if (status === "cancelled") {
+      return { ...secretario, inviteStatus: "cancelled" };
+    }
+
+    return { ...secretario, inviteStatus: "none" };
+  });
 }
 
 function normalizeSecretario(value) {

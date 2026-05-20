@@ -1943,29 +1943,18 @@ function appendSecretaryDraftField(listElement, value = {}) {
   emailField.appendChild(emailLabel);
   emailField.appendChild(emailInput);
 
-  const removeButton = document.createElement("button");
-  removeButton.type = "button";
-  removeButton.className = "ghost-action remove-secretary-button";
-  removeButton.textContent = "Remover";
-  removeButton.addEventListener("click", () => {
-    wrapper.remove();
-    if (!listElement.querySelector('.secretary-row[data-secretary-state="draft"]')) {
-      appendSecretaryDraftField(listElement);
-    }
-    scheduleTurmaAutosave();
-  });
-
-  const inputs = [nameInput, messengerInput, emailInput];
-  inputs.forEach((input) => {
-    input.addEventListener("blur", () => {
-      tryFinalizeSecretaryDraftRow(wrapper);
-    });
+  const inviteButton = document.createElement("button");
+  inviteButton.type = "button";
+  inviteButton.className = "primary-action invite-secretary-button";
+  inviteButton.textContent = "Convidar";
+  inviteButton.addEventListener("click", () => {
+    tryFinalizeSecretaryDraftRow(wrapper, { requireComplete: true });
   });
 
   fields.appendChild(nameField);
   fields.appendChild(messengerField);
   fields.appendChild(emailField);
-  fields.appendChild(removeButton);
+  fields.appendChild(inviteButton);
   wrapper.appendChild(fields);
   const firstPendingRow = listElement.querySelector('.secretary-row[data-secretary-state="pending"]');
   if (firstPendingRow) {
@@ -1983,6 +1972,7 @@ function appendSecretaryPendingRow(listElement, value = {}) {
   wrapper.dataset.nome = secretary.nome;
   wrapper.dataset.whatsapp = secretary.whatsapp;
   wrapper.dataset.email = secretary.email;
+  wrapper.dataset.inviteStatus = String(value?.inviteStatus || "pending").toLowerCase();
 
   const fields = document.createElement("div");
   fields.className = "secretary-row-fields secretary-row-pending-fields";
@@ -1993,19 +1983,45 @@ function appendSecretaryPendingRow(listElement, value = {}) {
 
   const badge = document.createElement("span");
   badge.className = "secretary-pending-badge";
-  badge.textContent = "Aguardando aceite";
+  const inviteStatus = wrapper.dataset.inviteStatus;
+  badge.textContent = inviteStatus === "accepted" ? "Aceito" : "Aguardando aceite";
 
   const removeButton = document.createElement("button");
   removeButton.type = "button";
   removeButton.className = "ghost-action remove-secretary-button";
-  removeButton.textContent = "Remover convite";
+  removeButton.textContent = inviteStatus === "accepted" ? "Remover do cadastro" : "Remover convite";
   removeButton.addEventListener("click", () => {
     wrapper.remove();
     scheduleTurmaAutosave();
   });
 
+  const resendButton = document.createElement("button");
+  resendButton.type = "button";
+  resendButton.className = "ghost-action resend-secretary-button";
+  resendButton.textContent = "Reenviar convite";
+  resendButton.hidden = inviteStatus === "accepted";
+  resendButton.addEventListener("click", async () => {
+    const email = String(wrapper.dataset.email || "").trim();
+    if (!email || !state.currentTurmaId) {
+      return;
+    }
+    resendButton.disabled = true;
+    try {
+      await apiRequest(`/api/turmas/${state.currentTurmaId}/secretary-invites/resend`, {
+        method: "POST",
+        body: { email },
+      });
+      showToast("success", "Convite reenviado", `O convite foi reenviado para ${email}.`);
+    } catch (error) {
+      showToast("error", "Erro ao reenviar", error.message);
+    } finally {
+      resendButton.disabled = false;
+    }
+  });
+
   fields.appendChild(meta);
   fields.appendChild(badge);
+  fields.appendChild(resendButton);
   fields.appendChild(removeButton);
   wrapper.appendChild(fields);
   listElement.appendChild(wrapper);
@@ -2018,11 +2034,14 @@ function isSecretaryDraftComplete(rowElement) {
   return Boolean(name && whatsapp && email && isValidEmail(email));
 }
 
-function tryFinalizeSecretaryDraftRow(rowElement) {
+function tryFinalizeSecretaryDraftRow(rowElement, { requireComplete = false } = {}) {
   if (!rowElement || rowElement.dataset.secretaryState !== "draft") {
     return;
   }
   if (!isSecretaryDraftComplete(rowElement)) {
+    if (requireComplete) {
+      showToast("error", "Dados incompletos", "Preencha nome, mensageiro e e-mail válido para convidar.");
+    }
     return;
   }
 
