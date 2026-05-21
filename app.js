@@ -23,7 +23,6 @@ const state = {
   currentProgramShareTurmaId: null,
   isProgramShareLoading: false,
   currentProgramShareError: "",
-  isContactsEditing: false,
   manualColumnWidths: {},
 };
 
@@ -40,7 +39,6 @@ const resetPasswordForm = document.querySelector("#reset-password-form");
 const registerForm = document.querySelector("#register-form");
 const contactsForm = document.querySelector("#contacts-form");
 const changePasswordForm = document.querySelector("#change-password-form");
-const contactsSaveButton = contactsForm?.querySelector('button[type="submit"]');
 const contactsSummary = document.querySelector("#contacts-summary");
 const adminUsersSection = document.querySelector("#admin-users-section");
 const adminUsersList = document.querySelector("#admin-users-list");
@@ -57,7 +55,6 @@ const adminUsersTitle = document.querySelector("#admin-users-title");
 const adminUsersDescription = document.querySelector("#admin-users-description");
 const turmaSecretariesList = document.querySelector("#turma-secretaries-list");
 const addTurmaSecretaryButton = document.querySelector("#add-turma-secretary-button");
-const editContactsButton = document.querySelector("#edit-contacts-button");
 const turmaForm = document.querySelector("#turma-form");
 const turmaSummary = document.querySelector("#turma-summary");
 const turmaList = document.querySelector("#turma-list");
@@ -721,19 +718,6 @@ function setupForms() {
     }
   });
 
-  editContactsButton.addEventListener("click", () => {
-    if (!state.session) {
-      contactsSummary.textContent = "Faça login para editar o cadastro.";
-      return;
-    }
-
-    state.isContactsEditing = !state.isContactsEditing;
-    renderContactsForm();
-    contactsSummary.textContent = state.isContactsEditing
-      ? "Cadastro pronto para edicao."
-      : "Cadastro em modo visualizacao.";
-  });
-
   adminUsersList?.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-user-save], [data-user-invite]");
     if (!button) {
@@ -1209,16 +1193,15 @@ function renderContactsForm(turma = null) {
   const profile = state.session || null;
 
   if (!profile) {
-    state.isContactsEditing = false;
     setContactsFormLocked(true);
     return;
   }
 
-  contactsForm.elements.dirigenteNome.value = profile.dirigenteNome || "";
+  contactsForm.elements.dirigenteNome.value = profile.dirigenteNome || profile.name || "";
   contactsForm.elements.telefone.value = profile.telefone || "";
   contactsForm.elements.whatsapp.value = profile.whatsapp || "";
-  contactsForm.elements.email.value = profile.contatoEmail || "";
-  setContactsFormLocked(!state.isContactsEditing);
+  contactsForm.elements.email.value = profile.contatoEmail || profile.email || "";
+  setContactsFormLocked(false);
 }
 
 function renderOwnerField() {
@@ -1312,11 +1295,13 @@ function renderContactsSummary(turma = null) {
     return;
   }
 
+  const dirigenteNome = state.session.dirigenteNome || state.session.name || "";
+  const contatoEmail = state.session.contatoEmail || state.session.email || "";
   contactsSummary.textContent =
-    `Dirigente: ${state.session.dirigenteNome || "não informado"}. ` +
+    `Dirigente: ${dirigenteNome || "não informado"}. ` +
     `Telefone: ${state.session.telefone || "não informado"}. ` +
-    `WhatsApp: ${state.session.whatsapp || "não informado"}. ` +
-    `E-mail: ${state.session.contatoEmail || "não informado"}.`;
+    `Mensageiro: ${state.session.whatsapp || "não informado"}. ` +
+    `E-mail: ${contatoEmail || "não informado"}.`;
 }
 
 function renderAdminUserManagement() {
@@ -1878,24 +1863,10 @@ function setContactsFormLocked(locked) {
   contactsForm.classList.toggle("is-readonly", locked);
 
   Array.from(contactsForm.elements).forEach((element) => {
-    if (element.tagName === "BUTTON") {
-      if (element === editContactsButton) {
-        element.disabled = !state.session;
-      } else {
-        element.disabled = locked;
-      }
-      return;
-    }
-
     if (element.name) {
       element.disabled = locked;
     }
   });
-
-  if (editContactsButton) {
-    editContactsButton.classList.toggle("is-active", state.isContactsEditing && !locked);
-    editContactsButton.setAttribute("aria-pressed", String(state.isContactsEditing && !locked));
-  }
 }
 
 function appendSecretaryDraftField(listElement, value = {}) {
@@ -1985,6 +1956,7 @@ function appendSecretaryPendingRow(listElement, value = {}) {
   badge.className = "secretary-pending-badge";
   const inviteStatus = wrapper.dataset.inviteStatus;
   badge.textContent = inviteStatus === "accepted" ? "Aceito" : "Aguardando aceite";
+  badge.classList.toggle("is-accepted", inviteStatus === "accepted");
 
   const removeButton = document.createElement("button");
   removeButton.type = "button";
@@ -2141,17 +2113,23 @@ function extractStudentsFromRows(rows) {
       whatsapp: row[columns.whatsapp],
     });
 
-    if (!aluno.nome && (aluno.email || aluno.whatsapp)) {
-      warnings.push(`Linha ${sourceLine} ignorada porque tem contato, mas está sem nome.`);
+    if (!aluno.nome && !aluno.email && !aluno.whatsapp) {
       return;
     }
 
     if (!aluno.nome) {
+      warnings.push(`Linha ${sourceLine} ignorada porque está sem nome.`);
       return;
     }
 
-    if (aluno.email && !isValidEmail(aluno.email)) {
+    if (!aluno.email) {
+      warnings.push(`Linha ${sourceLine} ignorada porque está sem e-mail.`);
+      return;
+    }
+
+    if (!isValidEmail(aluno.email)) {
       warnings.push(`Linha ${sourceLine} com e-mail inválido: ${aluno.email}.`);
+      return;
     }
 
     const duplicateKey = `${aluno.nome.toLowerCase()}::${aluno.email.toLowerCase()}`;
@@ -2165,7 +2143,7 @@ function extractStudentsFromRows(rows) {
   });
 
   if (!students.length) {
-    throw new Error("Nenhum aluno válido foi encontrado. Use ao menos a coluna de nome.");
+    throw new Error("Nenhum aluno válido foi encontrado. Use nome e e-mail em cada linha.");
   }
 
   return {
@@ -2486,7 +2464,7 @@ function handleContactsAutosaveInput(event) {
   if (!state.session) {
     return;
   }
-  if (!event.target?.name || !state.isContactsEditing) {
+  if (!event.target?.name) {
     return;
   }
   scheduleContactsAutosave();
@@ -2528,7 +2506,7 @@ async function runTurmaAutosave() {
 }
 
 function scheduleContactsAutosave() {
-  if (!state.session || !state.isContactsEditing) {
+  if (!state.session) {
     return;
   }
   autosaveState.contactsDirty = true;
@@ -2645,7 +2623,6 @@ function renderLoggedOutState(message = "Entre ou crie uma conta para começar."
   state.isEditingTurma = false;
   state.importedStudents = [];
   state.program = createMinimalProgram();
-  state.isContactsEditing = false;
   state.manualColumnWidths = {};
   loginForm.reset();
   registerForm.reset();
@@ -2768,7 +2745,7 @@ function formatSecretarySummary(value) {
 
 function renderSession() {
   sessionChip.textContent = state.session
-    ? `${state.session.name} · ${formatUserAccessLabel(state.session)}`
+    ? `${state.session.name}`
     : "Visitante";
   document.body.classList.toggle("is-authenticated", hasAppAccess());
   if (userMenuPanel) {
