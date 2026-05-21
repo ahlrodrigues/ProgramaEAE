@@ -1807,11 +1807,13 @@ function renderTurmaActions(turma = null) {
   const hasTurma = Boolean(turma);
   const isArchived = Boolean(turma?.archivedAt);
   const isAdmin = state.session?.role === "Admin";
+  const isOwner = Number(turma?.ownerUserId) === Number(state.session?.id);
+  const canDelete = isAdmin || isOwner;
 
   turmaActions.hidden = !hasTurma || !state.isTurmaDetailsOpen;
   archiveButton.hidden = !hasTurma || isArchived;
   restoreButton.hidden = !hasTurma || !isArchived;
-  deleteButton.hidden = !hasTurma || !isAdmin;
+  deleteButton.hidden = !hasTurma || !canDelete || isArchived;
 }
 
 function renderTurmaFormButtons(turma = null) {
@@ -2319,7 +2321,10 @@ function updateTurmaInState(updatedTurma) {
   const turmaIndex = state.turmas.findIndex((turma) => turma.id === updatedTurma.id);
   if (turmaIndex !== -1) {
     state.turmas[turmaIndex] = updatedTurma;
+    return;
   }
+
+  state.turmas.push(updatedTurma);
 }
 
 function getTurmaFormPayload() {
@@ -2474,7 +2479,16 @@ function scheduleTurmaAutosave() {
   if (!state.session || !state.isEditingTurma) {
     return;
   }
-  if (!String(turmaForm.elements.nome?.value || "").trim()) {
+  const turmaNome = String(turmaForm.elements.nome?.value || "").trim();
+  const turmaInicio = String(turmaForm.elements.inicio?.value || "").trim();
+  const turmaHorarioInicio = String(turmaForm.elements.horarioInicio?.value || "").trim();
+
+  if (!turmaNome) {
+    return;
+  }
+
+  // Na criação da turma, só inicia autosave quando os campos obrigatórios forem preenchidos.
+  if (!state.currentTurmaId && (!turmaInicio || !turmaHorarioInicio)) {
     return;
   }
   autosaveState.turmaDirty = true;

@@ -27,6 +27,7 @@ const SMTP_USER = process.env.SMTP_USER || process.env.GMAIL_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || process.env.GMAIL_PASS || "";
 const SECRETARY_INVITE_EXPIRATION_HOURS = 48;
 const SECRETARY_INVITE_RETENTION_DAYS = 30;
+const SECRETARY_INVITE_MAINTENANCE_INTERVAL_MINUTES = 15;
 const smtpTransporter = EMAIL_ENABLED && SMTP_HOST && SMTP_USER && SMTP_PASS
   ? nodemailer.createTransport({
       host: SMTP_HOST,
@@ -600,6 +601,16 @@ const cancelSecretaryInviteLinkStmt = db.prepare(`
   WHERE id = ?
 `);
 
+const expirePendingSecretaryInviteLinksStmt = db.prepare(`
+  UPDATE turma_secretary_invite_links
+  SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+  WHERE status = 'pending'
+    AND (
+      (expires_at IS NOT NULL AND expires_at <> '' AND expires_at < CURRENT_TIMESTAMP)
+      OR lower(invited_email) NOT LIKE '%_@_%._%'
+    )
+`);
+
 const getActiveTurmaMemberByEmailStmt = db.prepare(`
   SELECT users.id
   FROM turma_members
@@ -617,6 +628,11 @@ const purgeOldSecretaryInviteLinksStmt = db.prepare(`
 `);
 
 ensureDefaultUsers();
+runSecretaryInviteMaintenance();
+setInterval(
+  runSecretaryInviteMaintenance,
+  SECRETARY_INVITE_MAINTENANCE_INTERVAL_MINUTES * 60 * 1000
+);
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -1219,8 +1235,9 @@ async function handleApi(request, response, url) {
     }
 
     if (request.method === "DELETE") {
-      if (!isAdmin(session)) {
-        sendJson(response, 403, { error: "Somente Admin pode excluir definitivamente uma turma." });
+      const isOwner = Number(turma.user_id) === Number(session.id);
+      if (!isAdmin(session) && !isOwner) {
+        sendJson(response, 403, { error: "Somente Admin ou o dirigente responsável podem excluir a turma." });
         return;
       }
 
@@ -1935,7 +1952,7 @@ function normalizeStudents(value) {
       email: optionalText(item?.email),
       whatsapp: optionalText(item?.whatsapp),
     }))
-    .filter((item) => item.nome);
+    .filter((item) => item.nome && item.email);
 }
 
 function syncSecretaryInviteLinksForTurma(request, session, turma, secretarios) {
@@ -1994,6 +2011,15 @@ function syncSecretaryInviteLinksForTurma(request, session, turma, secretarios) 
       logEmailNotification(candidate.email, secretaryInviteEmail.subject, secretaryInviteEmail.body);
     }
   });
+}
+
+function runSecretaryInviteMaintenance() {
+  try {
+    expirePendingSecretaryInviteLinksStmt.run();
+    purgeOldSecretaryInviteLinksStmt.run(`-${SECRETARY_INVITE_RETENTION_DAYS} days`);
+  } catch (error) {
+    console.log(`[manutencao convites] Falha ao processar limpeza automática: ${error.message}`);
+  }
 }
 
 function normalizeTurmaType(value, existingTurma) {
