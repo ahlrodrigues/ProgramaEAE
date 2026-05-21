@@ -328,6 +328,21 @@ h4 {
   flex: 1;
 }
 
+#share-student-signup-url {
+  width: min(100%, 360px);
+  min-width: 220px;
+  flex: 0 1 360px;
+}
+
+.student-signup-link-row {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.student-signup-link-row .ghost-action {
+  white-space: nowrap;
+}
+
 #open-share-program-link {
   text-decoration: none;
 }
@@ -347,6 +362,14 @@ body.is-public-share-mode .panel[data-tab-panel="aprovacoes"] {
 
 body.is-public-share-mode .page-shell {
   display: block;
+}
+
+body.is-public-student-signup-mode .program-meta,
+body.is-public-student-signup-mode .tabs,
+body.is-public-student-signup-mode .panel[data-tab-panel="programa"] .section-head-wide,
+body.is-public-student-signup-mode #share-program-card,
+body.is-public-student-signup-mode .table-wrapper {
+  display: none !important;
 }
 
 .form-inline-actions {
@@ -480,7 +503,7 @@ body.is-public-share-mode .page-shell {
 }
 
 .secretary-row-pending-fields {
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
 }
 
@@ -503,6 +526,12 @@ body.is-public-share-mode .page-shell {
   font-weight: 700;
   letter-spacing: 0.01em;
   white-space: nowrap;
+}
+
+.secretary-pending-badge.is-accepted {
+  border-color: rgba(24, 118, 54, 0.32);
+  background: rgba(76, 175, 80, 0.2);
+  color: #1f6f34;
 }
 
 .secretary-input-group {

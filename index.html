@@ -340,6 +340,12 @@
                 Modelo da planilha
               </button>
             </div>
+            <p class="list-hint">Link de cadastro de alunos por turma (vínculo automático):</p>
+            <div class="inline-actions student-signup-link-row">
+              <input id="share-student-signup-url" type="text" readonly aria-label="Link público de cadastro de aluno" />
+              <button id="copy-share-student-signup-link" type="button" class="ghost-action">Copiar link</button>
+              <a id="open-share-student-signup-link" class="ghost-action" href="#" target="_blank" rel="noopener">Visualizar</a>
+            </div>
             <div class="students-table-wrapper">
               <table class="students-table">
                 <thead>
@@ -423,6 +429,30 @@
             <p id="share-program-status" class="list-hint">Selecione uma turma para gerar o link.</p>
           </div>
 
+          <section id="public-student-signup-card" class="saved-summary stack-card" hidden>
+            <h4>Cadastro de aluno na turma</h4>
+            <p>Preencha os dados abaixo para vincular o aluno automaticamente nesta turma.</p>
+            <p id="public-student-signup-turma-info" class="list-hint"></p>
+            <form id="public-student-signup-form" class="card-grid two-columns">
+              <label>
+                <span>Nome do aluno</span>
+                <input type="text" name="nome" placeholder="Nome completo" required />
+              </label>
+              <label>
+                <span>E-mail</span>
+                <input type="email" name="email" placeholder="aluno@exemplo.org" required />
+              </label>
+              <label class="full-row-field">
+                <span>Mensageiro</span>
+                <input type="text" name="whatsapp" placeholder="(00) 00000-0000" />
+              </label>
+              <div class="inline-actions form-inline-actions">
+                <button type="submit" class="primary-action">Cadastrar aluno</button>
+              </div>
+            </form>
+            <p id="public-student-signup-feedback" class="list-hint"></p>
+          </section>
+
           <div class="table-wrapper">
             <table id="program-table"></table>
           </div>
@@ -453,6 +483,22 @@
           <button id="download-students-template-button" type="button" class="primary-action">
             Baixar modelo CSV
           </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="confirm-action-dialog" class="app-dialog">
+      <form method="dialog" class="app-dialog-card">
+        <div class="app-dialog-head">
+          <div>
+            <span class="eyebrow">Confirmação</span>
+            <h3 id="confirm-action-title">Confirmar ação</h3>
+          </div>
+        </div>
+        <p id="confirm-action-message">Deseja continuar?</p>
+        <div class="inline-actions">
+          <button id="confirm-action-cancel" type="button" class="ghost-action">Cancelar</button>
+          <button id="confirm-action-confirm" type="button" class="danger-action">Confirmar</button>
         </div>
       </form>
     </dialog>

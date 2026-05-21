@@ -454,6 +454,12 @@ const updateTurmaStmt = db.prepare(`
   WHERE id = ?
 `);
 
+const updateTurmaStudentsStmt = db.prepare(`
+  UPDATE turmas
+  SET alunos_json = ?, updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
 const archiveTurmaStmt = db.prepare(`
   UPDATE turmas
   SET archived_at = CURRENT_TIMESTAMP, status = 'arquivado', updated_at = CURRENT_TIMESTAMP
@@ -638,6 +644,11 @@ const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
+    if (url.pathname.match(/^\/public\/alunos\/[^/]+\/?$/)) {
+      serveStatic("/", response);
+      return;
+    }
+
     if (url.pathname.startsWith("/api/")) {
       await handleApi(request, response, url);
       return;
@@ -678,6 +689,52 @@ async function handleApi(request, response, url) {
     sendJson(response, 200, {
       turma: mapTurma(turma),
       program: mapProgram(programRow),
+    });
+    return;
+  }
+
+  const publicStudentSignupMatch = url.pathname.match(/^\/api\/public\/programa\/([^/]+)\/alunos\/?$/);
+  if (publicStudentSignupMatch && request.method === "POST") {
+    const turmaId = resolvePublicProgramTurmaId(publicStudentSignupMatch[1]);
+    if (!turmaId) {
+      sendJson(response, 404, { error: "Link de compartilhamento inválido." });
+      return;
+    }
+
+    const turma = getTurmaByIdStmt.get(turmaId);
+    if (!turma || turma.archived_at) {
+      sendJson(response, 404, { error: "Turma não encontrada para este link." });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const newStudent = {
+      nome: requireField(body.nome, "Informe o nome do aluno."),
+      email: normalizeEmail(body.email),
+      whatsapp: optionalText(body.whatsapp),
+    };
+
+    const currentStudents = parseStudentsJson(turma.alunos_json);
+    const existingIndex = currentStudents.findIndex(
+      (student) => String(student?.email || "").trim().toLowerCase() === newStudent.email
+    );
+    if (existingIndex >= 0) {
+      currentStudents[existingIndex] = {
+        ...currentStudents[existingIndex],
+        nome: newStudent.nome,
+        email: newStudent.email,
+        whatsapp: newStudent.whatsapp,
+      };
+    } else {
+      currentStudents.push(newStudent);
+    }
+
+    updateTurmaStudentsStmt.run(JSON.stringify(currentStudents), turmaId);
+    sendJson(response, 201, {
+      success: true,
+      aluno: newStudent,
+      totalAlunos: currentStudents.length,
+      message: "Cadastro do aluno realizado com sucesso.",
     });
     return;
   }
@@ -1276,6 +1333,29 @@ async function handleApi(request, response, url) {
       expiresAt: pendingInvite.expires_at || buildSecretaryInviteExpirationTimestamp(),
     });
     logEmailNotification(email, secretaryInviteEmail.subject, secretaryInviteEmail.body);
+    sendJson(response, 200, { success: true });
+    return;
+  }
+
+  const cancelSecretaryInviteMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/secretary-invites\/cancel\/?$/);
+  if (cancelSecretaryInviteMatch && request.method === "POST") {
+    const turmaId = Number(cancelSecretaryInviteMatch[1]);
+    const turma = getTurmaOrFail(turmaId);
+    ensureTurmaAccess(session, turma);
+    if (turma.archived_at) {
+      sendJson(response, 409, { error: "Esta turma está arquivada e não aceita alteração de convites." });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const email = normalizeEmail(body.email);
+    const pendingInvite = getPendingSecretaryInviteLinkByTurmaAndEmailStmt.get(turmaId, email);
+    if (!pendingInvite) {
+      sendJson(response, 404, { error: "Convite pendente não encontrado para este e-mail." });
+      return;
+    }
+
+    cancelSecretaryInviteLinkStmt.run(pendingInvite.id);
     sendJson(response, 200, { success: true });
     return;
   }
@@ -2108,6 +2188,27 @@ function normalizeRow(row, length) {
     normalized.push("");
   }
   return normalized.slice(0, length);
+}
+
+function parseStudentsJson(value) {
+  if (!value) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed
+        .map((item) => ({
+          nome: optionalText(item?.nome),
+          email: optionalText(item?.email).toLowerCase(),
+          whatsapp: optionalText(item?.whatsapp),
+        }))
+        .filter((item) => item.nome && item.email)
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 function mapUser(row) {

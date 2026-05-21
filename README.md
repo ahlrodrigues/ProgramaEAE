@@ -116,36 +116,42 @@ npm run server:status
 - `GET /api/public/programa/:token`
 - `POST /api/secretary-invite-links/:token/accept`
 
-## Próximos passos sugeridos
+## Roadmap
 
-### Operação e confiabilidade
+### Concluídos recentes
 
-- Configurar SMTP em produção e validar entrega real de e-mails de vínculo e recuperação de senha.
-- Adicionar monitoramento e alerta para falhas de envio (`logEmailNotification`) e expiração de convites.
-- Criar backup automático do SQLite com política de retenção e restore documentado.
+- Cadastro abre em edição imediata (sem botão `Editar`).
+- Salvamento automático ativo no cadastro de contatos.
+- Remoção do botão `Salvar cadastro`.
+- Reaproveitamento de `nome` e `e-mail` da conta no formulário de cadastro após login.
+- Resumo de cadastro com fallback correto (evita “não informado” quando já há dados na conta).
+- Troca de rótulo “WhatsApp” por “Mensageiro” na experiência principal.
+- Nome do usuário no topo sem exibir cargo.
+- Nova turma aparece na lista após autosave dos campos obrigatórios (`número`, `data inicial`, `horário`).
+- Ação de exclusão de turma com modal padrão do projeto.
+- Exclusão de turma permitida para `Admin` e dirigente responsável pela turma.
+- Cancelamento explícito de convite pendente de secretário direto na UI da turma.
 
-### Segurança
+### Próximas entregas (priorizadas)
 
+1. Fluxo de secretários
+- Criar tela de “Convites enviados” por turma, com status (`pending`, `accepted`, `expired`) e opção de reenviar.
+- Cobrir E2E dos cenários: novo cadastro via convite, login existente via convite e convite expirado.
+- Adicionar botão para excluir alunos cadastrados.
+- Criar btn de exportação excel na tabela de alunos.
+- criar lista de presença a partir da tabela de alunos.
+
+2. Segurança
 - Implementar rate limit para login, recuperação e redefinição de senha.
 - Invalidar sessões ativas após redefinição de senha.
 - Adicionar política de senha (complexidade mínima e troca periódica opcional por configuração).
 
-### Fluxo de secretários
+3. Programa e experiência pública
+- Melhorar visualização pública para mobile (quebra de colunas largas e paginação opcional).
+- Adicionar opção de revogar/regenerar link público por turma.
+- Criar exportação PDF da visão pública sem controles administrativos.
 
-- Criar tela de “Convites enviados” por turma, com status (`pending`, `accepted`, `expired`) e opção de reenviar convite.
-- Permitir cancelamento explícito de convite pendente pelo dirigente.
-- Cobrir E2E de ponta a ponta dos cenários: novo cadastro via convite, login existente via convite e convite expirado.
-- Verificar se basta preencher os dados do secretário para o e-mail ser enviado automaticamente ou se é necessário um botão de cadastro.
-- Se for necessário confirmar o envio por ação explícita, criar botão para cadastro/envio do secretário.
-
-### Programa e experiência pública
-
-- Melhorar a visualização pública para mobile (quebra de colunas largas e paginação opcional).
-- Adicionar opção de revogar/regenerar link público de compartilhamento por turma.
-- Criar opção de exportação PDF da visão pública sem controles administrativos.
-
-### UX no cadastro de turma
-
-- Ao abrir o cadastro da turma, permitir edição imediata dos dados sem exigir clique no botão `Editar`.
-- Remover o botão `Salvar cadastro` (o fluxo já utiliza salvamento automático).
-- Verificar se o salvamento automático no cadastro de turma está funcionando em todos os campos relevantes.
+4. Operação e confiabilidade
+- Configurar SMTP em produção e validar entrega real de e-mails.
+- Adicionar monitoramento/alerta para falhas de envio (`logEmailNotification`) e expiração de convites.
+- Criar backup automático do SQLite com retenção e restore documentado.
