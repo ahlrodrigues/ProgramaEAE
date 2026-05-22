@@ -984,6 +984,13 @@ function setupProgramActions() {
   copyShareStudentSignupLinkButton?.addEventListener("click", copyShareStudentSignupLink);
   openShareStudentSignupLink?.addEventListener("click", openStudentSignupShareLink);
   toggleShareStudentSignupLinkButton?.addEventListener("click", toggleStudentSignupShareLink);
+  shareStudentSignupUrlInput?.addEventListener("click", (event) => {
+    event.preventDefault();
+    shareStudentSignupUrlInput.blur();
+  });
+  shareStudentSignupUrlInput?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
   [titleInput, startDateInput, endDateInput].forEach((input) => {
     input.addEventListener("input", () => {
       syncProgramMeta();
@@ -4105,6 +4112,17 @@ async function toggleStudentSignupShareLink() {
   const turmaId = turma?.id;
   if (!turmaId) return;
   const nextEnabled = !(turma?.studentSignupLinkEnabled !== false);
+  const confirmed = await showConfirmActionDialog({
+    title: nextEnabled ? "Ativar link público" : "Desativar link público",
+    message: nextEnabled
+      ? "Deseja ativar o link público de auto-cadastro dos alunos para esta turma?"
+      : "Deseja desativar o link público de auto-cadastro dos alunos para esta turma?",
+    confirmLabel: nextEnabled ? "Ativar link" : "Desativar link",
+  });
+  if (!confirmed) {
+    return;
+  }
+
   try {
     if (toggleShareStudentSignupLinkButton) {
       toggleShareStudentSignupLinkButton.disabled = true;
