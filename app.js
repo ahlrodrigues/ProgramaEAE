@@ -617,6 +617,35 @@ function setupForms() {
     }
   });
 
+  studentsTableBody?.addEventListener("click", async (event) => {
+    const removeButton = event.target.closest("[data-student-remove-index]");
+    if (!removeButton) return;
+
+    const studentIndex = Number(removeButton.dataset.studentRemoveIndex);
+    if (!Number.isInteger(studentIndex) || studentIndex < 0) return;
+    if (!Array.isArray(state.importedStudents) || studentIndex >= state.importedStudents.length) return;
+
+    const turma = findCurrentTurma();
+    if (turma?.archivedAt) {
+      showToast("error", "Turma arquivada", "Restaure a turma para remover alunos.");
+      return;
+    }
+
+    const aluno = state.importedStudents[studentIndex];
+    const alunoNome = String(aluno?.nome || "").trim() || "este aluno";
+    const confirmed = await showConfirmActionDialog({
+      title: "Remover aluno",
+      message: `Deseja remover ${alunoNome} desta turma?`,
+      confirmLabel: "Remover aluno",
+    });
+    if (!confirmed) return;
+
+    state.importedStudents = state.importedStudents.filter((_, index) => index !== studentIndex);
+    renderStudentsPanel();
+    scheduleTurmaAutosave();
+    showToast("success", "Aluno removido", `${alunoNome} foi removido da lista da turma.`);
+  });
+
   turmaForm.elements.inicio?.addEventListener("input", () => {
     syncTurmaWeekdayField(turmaForm.elements.inicio.value);
   });
@@ -1355,7 +1384,7 @@ function renderStudentsPanel() {
   if (!alunos.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 3;
+    cell.colSpan = 4;
     cell.textContent = "Nenhum aluno importado ainda.";
     row.appendChild(cell);
     studentsTableBody.appendChild(row);
@@ -1366,13 +1395,24 @@ function renderStudentsPanel() {
   }
 
   studentsImportFeedback.textContent = `${alunos.length} aluno(s) carregado(s) no cadastro.`;
-  alunos.forEach((aluno) => {
+  alunos.forEach((aluno, index) => {
     const row = document.createElement("tr");
     [aluno.nome, aluno.email, aluno.whatsapp].forEach((value) => {
       const cell = document.createElement("td");
       cell.textContent = value || "—";
       row.appendChild(cell);
     });
+
+    const actionsCell = document.createElement("td");
+    actionsCell.className = "students-actions-cell";
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "ghost-action";
+    removeButton.dataset.studentRemoveIndex = String(index);
+    removeButton.textContent = "Remover";
+    actionsCell.appendChild(removeButton);
+    row.appendChild(actionsCell);
+
     studentsTableBody.appendChild(row);
   });
 }
@@ -4138,13 +4178,22 @@ async function toggleStudentSignupShareLink() {
       method: "PUT",
       body: { enabled: nextEnabled },
     });
-    const updatedTurma = response?.turma;
-    if (updatedTurma) {
-      state.turmas = state.turmas.map((item) => item.id === updatedTurma.id ? updatedTurma : item);
-      if (state.currentTurmaId === updatedTurma.id) {
-        state.importedStudents = Array.isArray(updatedTurma.alunos) ? updatedTurma.alunos : [];
-      }
+    const updatedTurma = response?.turma || null;
+    const refreshedLinkState = await apiRequest(`/api/turmas/${turmaId}/student-signup-link`);
+    const refreshedEnabled = refreshedLinkState?.enabled !== false;
+    const refreshedUrl = String(refreshedLinkState?.url || "").trim();
+
+    state.currentStudentSignupShareUrl = refreshedUrl;
+    state.turmas = state.turmas.map((item) => {
+      if (Number(item.id) !== Number(turmaId)) return item;
+      const nextItem = updatedTurma ? { ...item, ...updatedTurma } : { ...item };
+      nextItem.studentSignupLinkEnabled = refreshedEnabled;
+      return nextItem;
+    });
+    if (Number(state.currentTurmaId) === Number(turmaId) && updatedTurma) {
+      state.importedStudents = Array.isArray(updatedTurma.alunos) ? updatedTurma.alunos : [];
     }
+
     renderProgramShareCard();
     renderTurmaSummary(findCurrentTurma() || updatedTurma || turma);
     showToast("success", "Link atualizado", nextEnabled

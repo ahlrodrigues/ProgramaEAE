@@ -797,9 +797,11 @@ textarea {
 }
 
 .students-table {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   border-collapse: collapse;
-  min-width: 560px;
+  min-width: 0;
+  table-layout: auto;
 }
 
 .students-table th,
@@ -813,10 +815,20 @@ textarea {
   color: var(--ink);
   font-family: "Fraunces", serif;
   font-size: 1rem;
+  text-align: center;
 }
 
 .students-table tbody tr:last-child td {
   border-bottom: none;
+}
+
+.students-table th:nth-child(4),
+.students-table td:nth-child(4) {
+  text-align: center;
+}
+
+.students-actions-cell .ghost-action {
+  min-width: 92px;
 }
 
 .access-summary h4 {
