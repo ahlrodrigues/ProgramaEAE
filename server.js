@@ -513,6 +513,20 @@ const upsertProgramStmt = db.prepare(`
     updated_at = CURRENT_TIMESTAMP
 `);
 
+const getTurmaAttendanceStmt = db.prepare(`
+  SELECT turma_id, records_json, updated_at
+  FROM turma_attendance
+  WHERE turma_id = ?
+`);
+
+const upsertTurmaAttendanceStmt = db.prepare(`
+  INSERT INTO turma_attendance (turma_id, records_json, updated_at)
+  VALUES (?, ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(turma_id) DO UPDATE SET
+    records_json = excluded.records_json,
+    updated_at = CURRENT_TIMESTAMP
+`);
+
 const cloneProgramStmt = db.prepare(`
   INSERT INTO programs (turma_id, title, period, review, headers_json, rows_json, updated_at)
   SELECT ?, title, period, review, headers_json, rows_json, CURRENT_TIMESTAMP
@@ -1467,6 +1481,39 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  const attendanceMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/attendance\/?$/);
+  if (attendanceMatch && request.method === "GET") {
+    const turmaId = Number(attendanceMatch[1]);
+    const turma = getTurmaOrFail(turmaId);
+    ensureTurmaAccess(session, turma);
+    const attendanceRow = getTurmaAttendanceStmt.get(turmaId);
+    sendJson(response, 200, {
+      records: parseAttendanceRecordsJson(attendanceRow?.records_json),
+      updatedAt: attendanceRow?.updated_at || null,
+    });
+    return;
+  }
+
+  if (attendanceMatch && request.method === "PUT") {
+    const turmaId = Number(attendanceMatch[1]);
+    const turma = getTurmaOrFail(turmaId);
+    ensureTurmaAccess(session, turma);
+    if (turma.archived_at) {
+      sendJson(response, 409, { error: "Restaure a turma antes de salvar presença." });
+      return;
+    }
+
+    const body = await readJsonBody(request);
+    const records = sanitizeAttendanceRecords(body.records);
+    upsertTurmaAttendanceStmt.run(turmaId, JSON.stringify(records));
+    const saved = getTurmaAttendanceStmt.get(turmaId);
+    sendJson(response, 200, {
+      records: parseAttendanceRecordsJson(saved?.records_json),
+      updatedAt: saved?.updated_at || null,
+    });
+    return;
+  }
+
   const programMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/program$/);
   if (programMatch && request.method === "PUT") {
     const turmaId = Number(programMatch[1]);
@@ -1654,6 +1701,13 @@ function initializeDatabase() {
       review TEXT,
       headers_json TEXT NOT NULL,
       rows_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (turma_id) REFERENCES turmas (id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS turma_attendance (
+      turma_id INTEGER PRIMARY KEY,
+      records_json TEXT NOT NULL DEFAULT '{}',
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (turma_id) REFERENCES turmas (id) ON DELETE CASCADE
     );
@@ -2450,6 +2504,45 @@ function mapTurma(row) {
       : null,
     updatedAt: row.updated_at,
   };
+}
+
+function parseAttendanceRecordsJson(rawJson) {
+  if (!rawJson) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(rawJson);
+    return sanitizeAttendanceRecords(parsed);
+  } catch (error) {
+    return {};
+  }
+}
+
+function sanitizeAttendanceRecords(records) {
+  if (!records || typeof records !== "object" || Array.isArray(records)) {
+    return {};
+  }
+
+  const sanitized = {};
+  Object.entries(records).forEach(([lessonKey, lessonValue]) => {
+    const safeLessonKey = String(lessonKey || "").trim().slice(0, 180);
+    if (!safeLessonKey || !lessonValue || typeof lessonValue !== "object" || Array.isArray(lessonValue)) {
+      return;
+    }
+
+    const lessonAttendance = {};
+    Object.entries(lessonValue).forEach(([studentKey, present]) => {
+      const safeStudentKey = String(studentKey || "").trim().slice(0, 180);
+      if (!safeStudentKey) {
+        return;
+      }
+      lessonAttendance[safeStudentKey] = Boolean(present);
+    });
+
+    sanitized[safeLessonKey] = lessonAttendance;
+  });
+
+  return sanitized;
 }
 
 function addDaysToTimestamp(timestamp, days) {

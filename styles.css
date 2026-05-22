@@ -18,9 +18,9 @@
   --toast-offset-y: 24px;
   --toast-max-width: 360px;
   --toast-gap: 12px;
-  --font-base: 3rem;
-  --font-helper: 2.6rem;
-  --font-helper-sm: 2.4rem;
+  --font-base: 1.15rem;
+  --font-helper: 1rem;
+  --font-helper-sm: 0.92rem;
 }
 
 * {
@@ -693,8 +693,18 @@ textarea {
   margin: 0;
   color: #7b4a30;
   font-weight: 700;
-  font-size: 3rem;
+  font-size: var(--font-helper);
   line-height: 1.25;
+}
+
+.turma-shortcuts {
+  margin: 0 0 10px;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.turma-shortcuts[hidden] {
+  display: none !important;
 }
 
 .turma-card-actions .ghost-action {

@@ -61,6 +61,8 @@
           <button class="tab is-active" data-tab-target="login">Login</button>
           <button class="tab" data-tab-target="cadastro">Cadastro</button>
           <button class="tab" data-tab-target="turmas">Turmas</button>
+          <button id="tab-programa-contexto" class="tab" type="button" hidden>Programa</button>
+          <button id="tab-lista-contexto" class="tab" type="button" hidden>Lista</button>
           <button class="tab" data-tab-target="programa-cb" data-tab-panel-target="programa">
             Programa CB
           </button>
@@ -232,8 +234,8 @@
         <section class="panel" data-tab-panel="turmas">
           <div class="section-head">
             <div>
-              <span class="eyebrow">Turmas</span>
-              <h3>Cadastro da turma</h3>
+              <span id="turmas-eyebrow" class="eyebrow">Turmas</span>
+              <h3 id="turmas-title">Cadastro da turma</h3>
             </div>
             <div class="section-actions">
               <p>Esses dados alimentam o contexto do programa e a organização da escola.</p>
@@ -242,7 +244,7 @@
               </div>
             </div>
           </div>
-          <p class="list-hint">Clique na turma para editar. O salvamento dos dados é automático.</p>
+          <p id="turmas-list-hint" class="list-hint">Clique na turma para editar. O salvamento dos dados é automático.</p>
           <div class="saved-summary turma-list" id="turma-list">
             <p class="list-empty">As turmas cadastradas aparecerão aqui.</p>
           </div>
@@ -365,6 +367,40 @@
                 </tbody>
               </table>
             </div>
+          </section>
+
+          <section class="saved-summary students-panel" id="attendance-panel" hidden>
+            <div class="students-panel-head">
+              <div class="inline-title">
+                <h4>Presença em aula</h4>
+                <p id="attendance-feedback">Selecione uma aula para marcar presença dos alunos.</p>
+              </div>
+            </div>
+            <form id="attendance-form" class="card-grid">
+              <label>
+                <span>Aula do programa</span>
+                <select id="attendance-lesson-select" name="lessonKey"></select>
+              </label>
+              <div class="students-table-wrapper">
+                <table class="students-table">
+                  <thead>
+                    <tr>
+                      <th>Aluno</th>
+                      <th>E-mail</th>
+                      <th>Presente</th>
+                    </tr>
+                  </thead>
+                  <tbody id="attendance-table-body">
+                    <tr>
+                      <td colspan="3">Selecione uma turma com alunos e programa preenchido.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="inline-actions form-inline-actions">
+                <button id="save-attendance-button" type="submit" class="primary-action">Salvar presença</button>
+              </div>
+            </form>
           </section>
 
           <div class="saved-summary" id="turma-summary" hidden>
