@@ -35,6 +35,12 @@ body {
     linear-gradient(145deg, #efe3d3 0%, #f7f4ee 56%, #edf5f3 100%);
 }
 
+body.is-booting .page-shell,
+body.is-booting .app-dialog,
+body.is-booting .toast-region {
+  visibility: hidden;
+}
+
 button,
 input,
 select,
@@ -794,6 +800,8 @@ textarea {
 
 .students-table-wrapper {
   overflow-x: auto;
+  display: flex;
+  justify-content: center;
 }
 
 .students-table {

@@ -124,6 +124,8 @@ const publicStudentSignupFeedback = document.querySelector("#public-student-sign
 const publicStudentSignupTurmaInfo = document.querySelector("#public-student-signup-turma-info");
 
 const TOKEN_KEY = "eae.api.token";
+const LAST_ACTIVITY_KEY = "eae.lastActivityAt";
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;
 const SHARE_TOKEN_QUERY_KEY = "shareToken";
 const STUDENT_SIGNUP_QUERY_KEY = "studentSignup";
 const SECRETARY_INVITE_TOKEN_QUERY_KEY = "secretaryInviteToken";
@@ -149,6 +151,12 @@ const autosaveState = {
   programDirty: false,
 };
 let toastDismissTimer = null;
+let inactivityTimer = null;
+let inactivityListenersBound = false;
+
+const INACTIVITY_EVENTS = ["pointerdown", "keydown", "touchstart", "wheel", "focus"];
+
+document.body.classList.add("is-booting");
 
 setupTabs();
 setupForms();
@@ -156,14 +164,113 @@ setupProgramActions();
 bootstrap();
 
 async function bootstrap() {
-  const shareToken = getPublicShareTokenFromUrl();
-  if (shareToken) {
-    await bootstrapPublicShareMode(shareToken);
+  try {
+    const shareToken = getPublicShareTokenFromUrl();
+    if (shareToken) {
+      await bootstrapPublicShareMode(shareToken);
+      return;
+    }
+
+    const token = window.localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      renderLoggedOutState();
+      revealResetPasswordFormIfNeeded();
+      return;
+    }
+
+    if (!isSessionActivityValid()) {
+      clearSessionPersistence();
+      renderLoggedOutState("Sessão expirada por inatividade.");
+      revealResetPasswordFormIfNeeded();
+      return;
+    }
+
+    const session = await apiRequest("/api/session");
+    state.session = session.user;
+    renderSession();
+    touchSessionActivity();
+    startInactivityMonitoring();
+    await tryAcceptSecretaryInviteFromUrl();
+    await loadReferenceData();
+    await loadTurmas();
+    activateTab("turmas");
+  } catch (error) {
+    clearSessionPersistence();
+    renderLoggedOutState("Sua sessão expirou. Faça login novamente.");
+    revealResetPasswordFormIfNeeded();
+  } finally {
+    document.body.classList.remove("is-booting");
+  }
+}
+
+function getLastActivityAt() {
+  return Number(window.localStorage.getItem(LAST_ACTIVITY_KEY) || 0);
+}
+
+function touchSessionActivity() {
+  if (!state.session || state.isPublicShareMode) return;
+  window.localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
+  scheduleInactivityTimer();
+}
+
+function isSessionActivityValid() {
+  const lastActivityAt = getLastActivityAt();
+  if (!lastActivityAt) return false;
+  return Date.now() - lastActivityAt < INACTIVITY_TIMEOUT_MS;
+}
+
+function clearSessionPersistence() {
+  window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(LAST_ACTIVITY_KEY);
+}
+
+function scheduleInactivityTimer() {
+  if (state.isPublicShareMode) return;
+  if (inactivityTimer) {
+    window.clearTimeout(inactivityTimer);
+    inactivityTimer = null;
+  }
+  const lastActivityAt = getLastActivityAt();
+  if (!lastActivityAt) return;
+  const remainingMs = INACTIVITY_TIMEOUT_MS - (Date.now() - lastActivityAt);
+  if (remainingMs <= 0) {
+    handleInactivityTimeout();
     return;
   }
-  window.localStorage.removeItem(TOKEN_KEY);
-  renderLoggedOutState();
-  revealResetPasswordFormIfNeeded();
+  inactivityTimer = window.setTimeout(handleInactivityTimeout, remainingMs);
+}
+
+function handleInactivityTimeout() {
+  if (state.isPublicShareMode) return;
+  stopInactivityMonitoring();
+  clearSessionPersistence();
+  renderLoggedOutState("Sessão expirada por inatividade.");
+  window.location.reload();
+}
+
+function startInactivityMonitoring() {
+  if (inactivityListenersBound) {
+    scheduleInactivityTimer();
+    return;
+  }
+  INACTIVITY_EVENTS.forEach((eventName) => {
+    window.addEventListener(eventName, touchSessionActivity, { passive: true });
+  });
+  inactivityListenersBound = true;
+  scheduleInactivityTimer();
+}
+
+function stopInactivityMonitoring() {
+  if (inactivityListenersBound) {
+    INACTIVITY_EVENTS.forEach((eventName) => {
+      window.removeEventListener(eventName, touchSessionActivity);
+    });
+    inactivityListenersBound = false;
+  }
+  if (inactivityTimer) {
+    window.clearTimeout(inactivityTimer);
+    inactivityTimer = null;
+  }
 }
 
 function getPublicShareTokenFromUrl() {
@@ -478,7 +585,8 @@ function setupForms() {
       // Mesmo se a sessão já estiver inválida, seguimos limpando o cliente.
     }
 
-    window.localStorage.removeItem(TOKEN_KEY);
+    stopInactivityMonitoring();
+    clearSessionPersistence();
     if (userMenuPanel) userMenuPanel.hidden = true;
     sessionChip?.setAttribute("aria-expanded", "false");
     renderLoggedOutState("Sessão encerrada.");
@@ -708,6 +816,8 @@ function setupForms() {
 
       window.localStorage.setItem(TOKEN_KEY, response.token);
       state.session = response.user;
+      touchSessionActivity();
+      startInactivityMonitoring();
       loginForm.reset();
       renderSession();
       const inviteAcceptance = await tryAcceptSecretaryInviteFromUrl();
@@ -743,6 +853,8 @@ function setupForms() {
 
       window.localStorage.setItem(TOKEN_KEY, response.token);
       state.session = response.user;
+      touchSessionActivity();
+      startInactivityMonitoring();
       registerForm.reset();
       renderSession();
       const inviteAcceptance = await tryAcceptSecretaryInviteFromUrl();

@@ -18,7 +18,7 @@
     <script src="./app.js?v=20260522-1" defer></script>
     <script src="./default-program-data.js?v=20260522-1" defer></script>
   </head>
-  <body>
+  <body class="is-booting">
     <div class="page-shell">
       <aside class="hero-panel" id="hero-panel">
         <span class="eyebrow">Plataforma acadêmica</span>
@@ -344,7 +344,7 @@
             <div class="inline-actions student-signup-link-row">
               <input id="share-student-signup-url" type="text" readonly aria-label="Link público de cadastro de aluno" />
               <button id="copy-share-student-signup-link" type="button" class="ghost-action">Copiar link</button>
-              <a id="open-share-student-signup-link" class="ghost-action" href="#" target="_blank" rel="noopener">Abrir formulário</a>
+              <a id="open-share-student-signup-link" class="ghost-action" href="#" target="_blank" rel="noopener">Abrir link</a>
               <button id="toggle-share-student-signup-link" type="button" class="ghost-action">Desativar link</button>
             </div>
             <p id="share-student-signup-status" class="list-hint"></p>
@@ -355,11 +355,12 @@
                     <th>Nome</th>
                     <th>E-mail</th>
                     <th>Mensageiro</th>
+                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody id="students-table-body">
                   <tr>
-                    <td colspan="3">Nenhum aluno importado ainda.</td>
+                    <td colspan="4">Nenhum aluno importado ainda.</td>
                   </tr>
                 </tbody>
               </table>
