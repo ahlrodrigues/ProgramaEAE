@@ -4021,8 +4021,11 @@ function renderProgramShareCard() {
   const hasStudentSignupLink = Boolean(studentSignupLink);
   const currentTurma = findCurrentTurma();
   const isStudentSignupEnabled = currentTurma?.studentSignupLinkEnabled !== false;
+  const isTurmaOwner = Number(currentTurma?.ownerUserId || 0) === Number(state.session?.id || 0);
+  const sessionRole = String(state.session?.role || "");
+  const isDirigenteOrSecretario = ["Dirigente", "Secretário"].includes(sessionRole);
   const canManageStudentSignupLink = hasAppAccess()
-    && ["Dirigente", "Secretário"].includes(String(state.session?.role || ""));
+    && (isTurmaOwner || isDirigenteOrSecretario);
   if (shareProgramUrlInput) {
     shareProgramUrlInput.value = state.currentProgramShareUrl || "";
   }
@@ -4059,7 +4062,7 @@ function renderProgramShareCard() {
   }
   if (toggleShareStudentSignupLinkButton) {
     toggleShareStudentSignupLinkButton.hidden = !shouldExposeStudentSignup || !canManageStudentSignupLink;
-    toggleShareStudentSignupLinkButton.textContent = isStudentSignupEnabled ? "Desativar link" : "Ativar link";
+    toggleShareStudentSignupLinkButton.textContent = isStudentSignupEnabled ? "Desativar link" : "Habilitar link";
   }
   if (shareStudentSignupStatus) {
     shareStudentSignupStatus.hidden = !shouldExposeStudentSignup;
@@ -4111,25 +4114,29 @@ async function toggleStudentSignupShareLink() {
   const turma = findCurrentTurma();
   const turmaId = turma?.id;
   if (!turmaId) return;
-  const nextEnabled = !(turma?.studentSignupLinkEnabled !== false);
-  const confirmed = await showConfirmActionDialog({
-    title: nextEnabled ? "Ativar link público" : "Desativar link público",
-    message: nextEnabled
-      ? "Deseja ativar o link público de auto-cadastro dos alunos para esta turma?"
-      : "Deseja desativar o link público de auto-cadastro dos alunos para esta turma?",
-    confirmLabel: nextEnabled ? "Ativar link" : "Desativar link",
-  });
-  if (!confirmed) {
-    return;
-  }
-
   try {
     if (toggleShareStudentSignupLinkButton) {
       toggleShareStudentSignupLinkButton.disabled = true;
     }
+
+    const linkState = await apiRequest(`/api/turmas/${turmaId}/student-signup-link`);
+    const currentEnabled = linkState?.enabled !== false;
+    const nextEnabled = !currentEnabled;
+
+    const confirmed = await showConfirmActionDialog({
+      title: nextEnabled ? "Habilitar link público" : "Desativar link público",
+      message: nextEnabled
+        ? "Deseja habilitar o link público de auto-cadastro dos alunos para esta turma?"
+        : "Deseja desativar o link público de auto-cadastro dos alunos para esta turma?",
+      confirmLabel: nextEnabled ? "Habilitar link" : "Desativar link",
+    });
+    if (!confirmed) {
+      return;
+    }
+
     const response = await apiRequest(`/api/turmas/${turmaId}/student-signup-link`, {
       method: "PUT",
-      body: JSON.stringify({ enabled: nextEnabled }),
+      body: { enabled: nextEnabled },
     });
     const updatedTurma = response?.turma;
     if (updatedTurma) {
@@ -4141,7 +4148,7 @@ async function toggleStudentSignupShareLink() {
     renderProgramShareCard();
     renderTurmaSummary(findCurrentTurma() || updatedTurma || turma);
     showToast("success", "Link atualizado", nextEnabled
-      ? "Link de cadastro ativado para esta turma."
+      ? "Link de cadastro habilitado para esta turma."
       : "Link de cadastro desativado para esta turma.");
   } catch (error) {
     showToast("error", "Falha ao atualizar", error.message);
