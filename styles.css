@@ -14,6 +14,10 @@
   --radius-xl: 28px;
   --radius-lg: 18px;
   --radius-md: 12px;
+  --toast-offset-x: 24px;
+  --toast-offset-y: 24px;
+  --toast-max-width: 360px;
+  --toast-gap: 12px;
 }
 
 * {
@@ -681,12 +685,12 @@ textarea {
 
 .toast-region {
   position: fixed;
-  top: 24px;
-  right: 24px;
+  top: var(--toast-offset-y);
+  right: var(--toast-offset-x);
   z-index: 1000;
   display: grid;
-  gap: 12px;
-  width: min(360px, calc(100vw - 32px));
+  gap: var(--toast-gap);
+  width: min(var(--toast-max-width), calc(100vw - (var(--toast-offset-x) * 2)));
 }
 
 .toast {

@@ -58,41 +58,43 @@
         font-weight: 800;
         color: var(--ink);
       }
-      .toast-region {
+      .public-toast-region {
         position: fixed;
-        right: 16px;
-        bottom: 16px;
+        right: var(--toast-offset-x, 24px);
+        top: var(--toast-offset-y, 24px);
         z-index: 2000;
-        width: min(360px, calc(100vw - 32px));
+        width: min(var(--toast-max-width, 360px), calc(100vw - (var(--toast-offset-x, 24px) * 2)));
         display: grid;
-        gap: 10px;
+        gap: var(--toast-gap, 12px);
       }
-      .toast {
+      .public-toast {
         border-radius: 12px;
         border: 1px solid #bfdbfe;
         background: #eff6ff;
         color: #1e3a8a;
         box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
-        padding: 12px 14px;
+        padding: 8px 10px;
       }
-      .toast.is-success {
+      .public-toast.is-success {
         border-color: #bbf7d0;
         background: #f0fdf4;
         color: #166534;
       }
-      .toast.is-error {
+      .public-toast.is-error {
         border-color: #fecaca;
         background: #fef2f2;
         color: #991b1b;
       }
-      .toast strong {
+      .public-toast strong {
         display: block;
-        margin-bottom: 4px;
-        font-size: 0.92rem;
+        margin-bottom: 2px;
+        font-size: 0.85rem;
+        line-height: 1.2;
       }
-      .toast p {
+      .public-toast p {
         margin: 0;
-        font-size: 0.88rem;
+        font-size: 0.8rem;
+        line-height: 1.25;
         color: inherit;
       }
     </style>
@@ -127,7 +129,7 @@
         </section>
       </main>
     </div>
-    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <div id="toast-region" class="public-toast-region" aria-live="polite" aria-atomic="true"></div>
 
     <script>
       (function () {
@@ -160,7 +162,7 @@
           }
           toastRegion.replaceChildren();
           const toast = document.createElement("div");
-          toast.className = "toast " + (kind === "error" ? "is-error" : "is-success");
+          toast.className = "public-toast " + (kind === "error" ? "is-error" : "is-success");
           const heading = document.createElement("strong");
           heading.textContent = title || "";
           const body = document.createElement("p");
