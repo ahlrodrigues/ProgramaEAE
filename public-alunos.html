@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cadastro de Alunos - EAE</title>
+    <style>
+      :root {
+        --bg: #f3f6fb;
+        --card: #ffffff;
+        --text: #1f2937;
+        --muted: #6b7280;
+        --primary: #0f766e;
+        --primary-contrast: #ffffff;
+        --border: #d1d5db;
+        --ok: #166534;
+        --error: #b91c1c;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Manrope, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at 10% 10%, #e0f2fe 0%, var(--bg) 45%);
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+      }
+      .card {
+        width: 100%;
+        max-width: 680px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+        padding: 20px;
+      }
+      h1 { margin: 0 0 8px; font-size: 1.4rem; }
+      p { margin: 0 0 10px; color: var(--muted); }
+      form { margin-top: 16px; display: grid; gap: 12px; }
+      label { display: grid; gap: 6px; font-weight: 600; }
+      input {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font: inherit;
+      }
+      button {
+        margin-top: 4px;
+        border: 0;
+        border-radius: 10px;
+        padding: 11px 14px;
+        font: inherit;
+        font-weight: 700;
+        color: var(--primary-contrast);
+        background: var(--primary);
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.65; cursor: wait; }
+      .feedback { margin-top: 10px; font-weight: 600; min-height: 22px; }
+      .feedback.ok { color: var(--ok); }
+      .feedback.error { color: var(--error); }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Cadastro de aluno na turma</h1>
+      <p>Preencha os dados para vincular o aluno automaticamente.</p>
+      <p id="turma-info">Carregando turma...</p>
+      <form id="signup-form">
+        <label>
+          <span>Nome</span>
+          <input type="text" name="nome" required placeholder="Nome completo" />
+        </label>
+        <label>
+          <span>E-mail</span>
+          <input type="email" name="email" required placeholder="aluno@exemplo.org" />
+        </label>
+        <label>
+          <span>Mensageiro</span>
+          <input type="text" name="mensageiro" placeholder="(00) 00000-0000" />
+        </label>
+        <button type="submit" id="submit-btn">Cadastrar aluno</button>
+      </form>
+      <p class="feedback" id="feedback"></p>
+    </main>
+
+    <script>
+      (function () {
+        const token = (window.location.pathname.match(/^\/public\/alunos\/([^/]+)\/?$/) || [])[1] || "";
+        const turmaInfo = document.getElementById("turma-info");
+        const form = document.getElementById("signup-form");
+        const feedback = document.getElementById("feedback");
+        const submitBtn = document.getElementById("submit-btn");
+
+        function setFeedback(message, type) {
+          feedback.textContent = message || "";
+          feedback.className = "feedback" + (type ? " " + type : "");
+        }
+
+        async function loadTurma() {
+          if (!token) {
+            setFeedback("Link inválido.", "error");
+            form.hidden = true;
+            turmaInfo.textContent = "Não foi possível identificar a turma.";
+            return;
+          }
+          const response = await fetch("/api/public/turma/" + encodeURIComponent(token));
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            setFeedback(data.error || "Não foi possível abrir o formulário.", "error");
+            form.hidden = true;
+            turmaInfo.textContent = "Turma indisponível para cadastro.";
+            return;
+          }
+          const turma = data.turma || {};
+          turmaInfo.textContent = [
+            "Turma: " + (turma.nome || "não informada"),
+            "Tipo: " + (turma.tipo || "não informado"),
+            "Modalidade: " + (turma.modalidade || "não informada"),
+            "Início: " + (turma.inicio || "não informado")
+          ].join(" · ");
+          setFeedback("");
+        }
+
+        form.addEventListener("submit", async function (event) {
+          event.preventDefault();
+          if (!token) return;
+          const payload = Object.fromEntries(new FormData(form).entries());
+          submitBtn.disabled = true;
+          setFeedback("Enviando cadastro...", "");
+          try {
+            const response = await fetch("/api/public/programa/" + encodeURIComponent(token) + "/alunos", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(data.error || "Não foi possível concluir o cadastro.");
+            }
+            form.reset();
+            setFeedback((data.aluno && data.aluno.nome ? data.aluno.nome : "Aluno") + " cadastrado(a) com sucesso.", "ok");
+          } catch (error) {
+            setFeedback(error.message || "Erro ao cadastrar aluno.", "error");
+          } finally {
+            submitBtn.disabled = false;
+          }
+        });
+
+        loadTurma().catch(function () {
+          setFeedback("Erro ao carregar os dados da turma.", "error");
+          form.hidden = true;
+        });
+      })();
+    </script>
+  </body>
+</html>

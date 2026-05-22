@@ -10,13 +10,13 @@
       href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260522-1" />
     <script
       src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"
       defer
     ></script>
-    <script src="./app.js" defer></script>
-    <script src="./default-program-data.js" defer></script>
+    <script src="./app.js?v=20260522-1" defer></script>
+    <script src="./default-program-data.js?v=20260522-1" defer></script>
   </head>
   <body>
     <div class="page-shell">
@@ -344,8 +344,10 @@
             <div class="inline-actions student-signup-link-row">
               <input id="share-student-signup-url" type="text" readonly aria-label="Link público de cadastro de aluno" />
               <button id="copy-share-student-signup-link" type="button" class="ghost-action">Copiar link</button>
-              <a id="open-share-student-signup-link" class="ghost-action" href="#" target="_blank" rel="noopener">Visualizar</a>
+              <a id="open-share-student-signup-link" class="ghost-action" href="#" target="_blank" rel="noopener">Abrir formulário</a>
+              <button id="toggle-share-student-signup-link" type="button" class="ghost-action">Desativar link</button>
             </div>
+            <p id="share-student-signup-status" class="list-hint"></p>
             <div class="students-table-wrapper">
               <table class="students-table">
                 <thead>
@@ -444,7 +446,7 @@
               </label>
               <label class="full-row-field">
                 <span>Mensageiro</span>
-                <input type="text" name="whatsapp" placeholder="(00) 00000-0000" />
+                <input type="text" name="mensageiro" placeholder="(00) 00000-0000" />
               </label>
               <div class="inline-actions form-inline-actions">
                 <button type="submit" class="primary-action">Cadastrar aluno</button>

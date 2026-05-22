@@ -21,6 +21,7 @@ const state = {
   isProgramEditing: false,
   currentProgramShareUrl: "",
   currentProgramShareToken: "",
+  currentStudentSignupShareUrl: "",
   currentProgramShareTurmaId: null,
   isProgramShareLoading: false,
   currentProgramShareError: "",
@@ -114,10 +115,13 @@ const openShareProgramLink = document.querySelector("#open-share-program-link");
 const shareStudentSignupUrlInput = document.querySelector("#share-student-signup-url");
 const copyShareStudentSignupLinkButton = document.querySelector("#copy-share-student-signup-link");
 const openShareStudentSignupLink = document.querySelector("#open-share-student-signup-link");
+const toggleShareStudentSignupLinkButton = document.querySelector("#toggle-share-student-signup-link");
+const shareStudentSignupStatus = document.querySelector("#share-student-signup-status");
 const shareProgramStatus = document.querySelector("#share-program-status");
 const publicStudentSignupCard = document.querySelector("#public-student-signup-card");
 const publicStudentSignupForm = document.querySelector("#public-student-signup-form");
 const publicStudentSignupFeedback = document.querySelector("#public-student-signup-feedback");
+const publicStudentSignupTurmaInfo = document.querySelector("#public-student-signup-turma-info");
 
 const TOKEN_KEY = "eae.api.token";
 const SHARE_TOKEN_QUERY_KEY = "shareToken";
@@ -157,26 +161,9 @@ async function bootstrap() {
     await bootstrapPublicShareMode(shareToken);
     return;
   }
-
-  const token = window.localStorage.getItem(TOKEN_KEY);
-  if (!token) {
-    renderLoggedOutState();
-    revealResetPasswordFormIfNeeded();
-    return;
-  }
-
-  try {
-    const session = await apiRequest("/api/session");
-    state.session = session.user;
-    renderSession();
-    await tryAcceptSecretaryInviteFromUrl();
-    await loadReferenceData();
-    await loadTurmas();
-    activateTab("turmas");
-  } catch (error) {
-    window.localStorage.removeItem(TOKEN_KEY);
-    renderLoggedOutState("Sua sessão expirou. Faça login novamente.");
-  }
+  window.localStorage.removeItem(TOKEN_KEY);
+  renderLoggedOutState();
+  revealResetPasswordFormIfNeeded();
 }
 
 function getPublicShareTokenFromUrl() {
@@ -245,15 +232,19 @@ async function tryAcceptSecretaryInviteFromUrl() {
 
 async function bootstrapPublicShareMode(token) {
   state.isPublicShareMode = true;
+  const isStudentSignupMode = isStudentSignupModeFromUrl();
   document.body.classList.add("is-public-share-mode");
-  document.body.classList.toggle("is-public-student-signup-mode", isStudentSignupModeFromUrl());
+  document.body.classList.toggle("is-public-student-signup-mode", isStudentSignupMode);
   state.currentProgramShareUrl = "";
   state.currentProgramShareTurmaId = null;
   state.isProgramShareLoading = false;
   state.currentProgramShareError = "";
 
   try {
-    const response = await window.fetch(`/api/public/programa/${encodeURIComponent(token)}`);
+    const publicApiPath = isStudentSignupMode
+      ? `/api/public/turma/${encodeURIComponent(token)}`
+      : `/api/public/programa/${encodeURIComponent(token)}`;
+    const response = await window.fetch(publicApiPath);
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data.error || "Não foi possível carregar o programa compartilhado.");
@@ -261,8 +252,8 @@ async function bootstrapPublicShareMode(token) {
 
     const turma = data.turma || null;
     const program = data.program || null;
-    if (!turma || !program) {
-      throw new Error("Programa compartilhado inválido.");
+    if (!turma || (!isStudentSignupMode && !program)) {
+      throw new Error("Link compartilhado inválido.");
     }
 
     state.session = {
@@ -275,7 +266,9 @@ async function bootstrapPublicShareMode(token) {
     state.turmas = [turma];
     state.currentTurmaId = turma.id;
     state.currentProgramTab = getProgramTabForTurmaType(turma.tipo) || "programa-cb";
-    state.program = removePublicContatoColumn(resolveProgramForActiveTab(program));
+    state.program = program
+      ? removePublicContatoColumn(resolveProgramForActiveTab(program))
+      : createMinimalProgram();
     state.isProgramEditing = false;
     state.isCreatingTurma = false;
     state.isTurmaDetailsOpen = false;
@@ -294,7 +287,7 @@ async function bootstrapPublicShareMode(token) {
     turmaSummary.hidden = false;
     renderTurmaSummary(turma);
     activateTab(state.currentProgramTab);
-    if (isStudentSignupModeFromUrl()) {
+    if (isStudentSignupMode) {
       publicStudentSignupForm?.elements?.nome?.focus();
     }
   } catch (error) {
@@ -989,6 +982,8 @@ function setupProgramActions() {
   });
   copyShareProgramLinkButton?.addEventListener("click", copyShareProgramLink);
   copyShareStudentSignupLinkButton?.addEventListener("click", copyShareStudentSignupLink);
+  openShareStudentSignupLink?.addEventListener("click", openStudentSignupShareLink);
+  toggleShareStudentSignupLinkButton?.addEventListener("click", toggleStudentSignupShareLink);
   [titleInput, startDateInput, endDateInput].forEach((input) => {
     input.addEventListener("input", () => {
       syncProgramMeta();
@@ -3962,6 +3957,7 @@ function updateProgramEditorLockState(isArchived) {
 async function loadProgramShareLink(turmaId) {
   state.currentProgramShareUrl = "";
   state.currentProgramShareToken = "";
+  state.currentStudentSignupShareUrl = "";
   state.currentProgramShareError = "";
   state.currentProgramShareTurmaId = turmaId || null;
   state.isProgramShareLoading = Boolean(turmaId);
@@ -3972,13 +3968,18 @@ async function loadProgramShareLink(turmaId) {
   }
 
   try {
-    const response = await apiRequest(`/api/turmas/${turmaId}/share-link`);
-    state.currentProgramShareUrl = response.url || "";
-    state.currentProgramShareToken = String(response.token || "").trim();
+    const [programResponse, studentSignupResponse] = await Promise.all([
+      apiRequest(`/api/turmas/${turmaId}/share-link`),
+      apiRequest(`/api/turmas/${turmaId}/student-signup-link`),
+    ]);
+    state.currentProgramShareUrl = programResponse.url || "";
+    state.currentProgramShareToken = String(programResponse.token || "").trim();
+    state.currentStudentSignupShareUrl = studentSignupResponse.url || "";
     state.currentProgramShareError = "";
   } catch (error) {
     state.currentProgramShareUrl = "";
     state.currentProgramShareToken = "";
+    state.currentStudentSignupShareUrl = "";
     state.currentProgramShareError = error.message;
   }
   state.isProgramShareLoading = false;
@@ -4009,8 +4010,12 @@ function renderProgramShareCard() {
   }
 
   const hasLink = Boolean(state.currentProgramShareUrl);
-  const studentSignupLink = buildStudentSignupShareUrl(state.currentProgramShareUrl, state.currentProgramShareToken);
+  const studentSignupLink = String(state.currentStudentSignupShareUrl || "").trim();
   const hasStudentSignupLink = Boolean(studentSignupLink);
+  const currentTurma = findCurrentTurma();
+  const isStudentSignupEnabled = currentTurma?.studentSignupLinkEnabled !== false;
+  const canManageStudentSignupLink = Boolean(state.session)
+    && (state.session.role === "Admin" || state.session.id === currentTurma?.ownerUserId);
   if (shareProgramUrlInput) {
     shareProgramUrlInput.value = state.currentProgramShareUrl || "";
   }
@@ -4031,7 +4036,7 @@ function renderProgramShareCard() {
 
   // Link de cadastro de alunos é exibido dentro do card "Alunos da turma".
   const shouldExposeStudentSignup = !state.isPublicShareMode && Boolean(state.currentTurmaId);
-  const canOpenStudentSignup = shouldExposeStudentSignup && hasStudentSignupLink;
+  const canOpenStudentSignup = shouldExposeStudentSignup && hasStudentSignupLink && isStudentSignupEnabled;
   if (shareStudentSignupUrlInput) {
     shareStudentSignupUrlInput.value = canOpenStudentSignup ? studentSignupLink : "";
     shareStudentSignupUrlInput.hidden = !canOpenStudentSignup;
@@ -4044,6 +4049,16 @@ function renderProgramShareCard() {
   if (copyShareStudentSignupLinkButton) {
     copyShareStudentSignupLinkButton.disabled = !canOpenStudentSignup;
     copyShareStudentSignupLinkButton.hidden = !canOpenStudentSignup;
+  }
+  if (toggleShareStudentSignupLinkButton) {
+    toggleShareStudentSignupLinkButton.hidden = !shouldExposeStudentSignup || !canManageStudentSignupLink;
+    toggleShareStudentSignupLinkButton.textContent = isStudentSignupEnabled ? "Desativar link" : "Ativar link";
+  }
+  if (shareStudentSignupStatus) {
+    shareStudentSignupStatus.hidden = !shouldExposeStudentSignup;
+    shareStudentSignupStatus.textContent = isStudentSignupEnabled
+      ? "Link de cadastro ativo para esta turma."
+      : "Link de cadastro desativado pelo dirigente.";
   }
 }
 
@@ -4065,13 +4080,57 @@ async function copyShareProgramLink() {
 }
 
 async function copyShareStudentSignupLink() {
-  const link = buildStudentSignupShareUrl(state.currentProgramShareUrl, state.currentProgramShareToken);
+  const link = String(state.currentStudentSignupShareUrl || "").trim();
   if (!link) return;
   try {
     await navigator.clipboard.writeText(link);
     showToast("success", "Link copiado", "O link de cadastro de alunos foi copiado.");
   } catch (error) {
     showToast("error", "Falha ao copiar", "Copie manualmente o link do campo de cadastro de alunos.");
+  }
+}
+
+function openStudentSignupShareLink(event) {
+  event?.preventDefault();
+  const link = String(state.currentStudentSignupShareUrl || "").trim();
+  if (!link) {
+    showToast("error", "Link indisponível", "Não foi possível gerar o link de cadastro desta turma.");
+    return;
+  }
+  window.open(link, "_blank", "noopener");
+}
+
+async function toggleStudentSignupShareLink() {
+  const turma = findCurrentTurma();
+  const turmaId = turma?.id;
+  if (!turmaId) return;
+  const nextEnabled = !(turma?.studentSignupLinkEnabled !== false);
+  try {
+    if (toggleShareStudentSignupLinkButton) {
+      toggleShareStudentSignupLinkButton.disabled = true;
+    }
+    const response = await apiRequest(`/api/turmas/${turmaId}/student-signup-link`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled: nextEnabled }),
+    });
+    const updatedTurma = response?.turma;
+    if (updatedTurma) {
+      state.turmas = state.turmas.map((item) => item.id === updatedTurma.id ? updatedTurma : item);
+      if (state.currentTurmaId === updatedTurma.id) {
+        state.importedStudents = Array.isArray(updatedTurma.alunos) ? updatedTurma.alunos : [];
+      }
+    }
+    renderProgramShareCard();
+    renderTurmaSummary(findCurrentTurma() || updatedTurma || turma);
+    showToast("success", "Link atualizado", nextEnabled
+      ? "Link de cadastro ativado para esta turma."
+      : "Link de cadastro desativado para esta turma.");
+  } catch (error) {
+    showToast("error", "Falha ao atualizar", error.message);
+  } finally {
+    if (toggleShareStudentSignupLinkButton) {
+      toggleShareStudentSignupLinkButton.disabled = false;
+    }
   }
 }
 

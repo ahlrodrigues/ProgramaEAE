@@ -398,7 +398,7 @@ const listTurmasByAccessStmt = db.prepare(`
   SELECT DISTINCT turmas.id, turmas.user_id, turmas.nome, turmas.curso, turmas.modalidade, turmas.tipo, turmas.status,
          turmas.turno, turmas.professor, turmas.inicio, turmas.observacoes, turmas.horarios,
          turmas.alunos_json, turmas.dirigente_nome, turmas.secretarios_json,
-         turmas.telefone, turmas.whatsapp, turmas.email, turmas.updated_at, turmas.archived_at,
+         turmas.telefone, turmas.whatsapp, turmas.email, turmas.student_signup_link_enabled, turmas.updated_at, turmas.archived_at,
          users.name AS owner_name, users.email AS owner_email
   FROM turmas
   JOIN users ON users.id = turmas.user_id
@@ -414,7 +414,7 @@ const listArchivedTurmasByAccessStmt = db.prepare(`
   SELECT DISTINCT turmas.id, turmas.user_id, turmas.nome, turmas.curso, turmas.modalidade, turmas.tipo, turmas.status,
          turmas.turno, turmas.professor, turmas.inicio, turmas.observacoes, turmas.horarios,
          turmas.alunos_json, turmas.dirigente_nome, turmas.secretarios_json,
-         turmas.telefone, turmas.whatsapp, turmas.email, turmas.updated_at, turmas.archived_at,
+         turmas.telefone, turmas.whatsapp, turmas.email, turmas.student_signup_link_enabled, turmas.updated_at, turmas.archived_at,
          users.name AS owner_name, users.email AS owner_email
   FROM turmas
   JOIN users ON users.id = turmas.user_id
@@ -430,7 +430,7 @@ const getTurmaByIdStmt = db.prepare(`
   SELECT turmas.id, turmas.user_id, turmas.nome, turmas.curso, turmas.modalidade, turmas.tipo, turmas.status,
          turmas.turno, turmas.professor, turmas.inicio, turmas.observacoes, turmas.horarios,
          turmas.alunos_json, turmas.dirigente_nome, turmas.secretarios_json,
-         turmas.telefone, turmas.whatsapp, turmas.email, turmas.updated_at, turmas.archived_at,
+         turmas.telefone, turmas.whatsapp, turmas.email, turmas.student_signup_link_enabled, turmas.updated_at, turmas.archived_at,
          users.name AS owner_name, users.email AS owner_email
   FROM turmas
   JOIN users ON users.id = turmas.user_id
@@ -457,6 +457,12 @@ const updateTurmaStmt = db.prepare(`
 const updateTurmaStudentsStmt = db.prepare(`
   UPDATE turmas
   SET alunos_json = ?, updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`);
+
+const updateTurmaStudentSignupLinkEnabledStmt = db.prepare(`
+  UPDATE turmas
+  SET student_signup_link_enabled = ?, updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `);
 
@@ -645,7 +651,7 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
     if (url.pathname.match(/^\/public\/alunos\/[^/]+\/?$/)) {
-      serveStatic("/", response);
+      serveStatic("/public-alunos.html", response);
       return;
     }
 
@@ -693,6 +699,28 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  const publicTurmaMatch = url.pathname.match(/^\/api\/public\/turma\/([^/]+)\/?$/);
+  if (publicTurmaMatch && request.method === "GET") {
+    const turmaId = resolvePublicProgramTurmaId(publicTurmaMatch[1]);
+    if (!turmaId) {
+      sendJson(response, 404, { error: "Link de compartilhamento inválido." });
+      return;
+    }
+
+    const turma = getTurmaByIdStmt.get(turmaId);
+    if (!turma || turma.archived_at) {
+      sendJson(response, 404, { error: "Turma não encontrada para este link." });
+      return;
+    }
+    if (Number(turma.student_signup_link_enabled) === 0) {
+      sendJson(response, 403, { error: "O link de cadastro desta turma está temporariamente desativado." });
+      return;
+    }
+
+    sendJson(response, 200, { turma: mapTurma(turma) });
+    return;
+  }
+
   const publicStudentSignupMatch = url.pathname.match(/^\/api\/public\/programa\/([^/]+)\/alunos\/?$/);
   if (publicStudentSignupMatch && request.method === "POST") {
     const turmaId = resolvePublicProgramTurmaId(publicStudentSignupMatch[1]);
@@ -706,12 +734,16 @@ async function handleApi(request, response, url) {
       sendJson(response, 404, { error: "Turma não encontrada para este link." });
       return;
     }
+    if (Number(turma.student_signup_link_enabled) === 0) {
+      sendJson(response, 403, { error: "O link de cadastro desta turma está temporariamente desativado." });
+      return;
+    }
 
     const body = await readJsonBody(request);
     const newStudent = {
       nome: requireField(body.nome, "Informe o nome do aluno."),
       email: normalizeEmail(body.email),
-      whatsapp: optionalText(body.whatsapp),
+      whatsapp: optionalText(body.mensageiro ?? body.whatsapp),
     };
 
     const currentStudents = parseStudentsJson(turma.alunos_json);
@@ -1373,6 +1405,36 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  const studentSignupLinkGetMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/student-signup-link\/?$/);
+  if (studentSignupLinkGetMatch && request.method === "GET") {
+    const turmaId = Number(studentSignupLinkGetMatch[1]);
+    const turma = getTurmaOrFail(turmaId);
+    ensureTurmaAccess(session, turma);
+    const token = buildPublicProgramToken(turmaId);
+    sendJson(response, 200, {
+      token,
+      enabled: Number(turma.student_signup_link_enabled) !== 0,
+      url: buildPublicStudentSignupUrl(request, token),
+    });
+    return;
+  }
+
+  const studentSignupLinkMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/student-signup-link\/?$/);
+  if (studentSignupLinkMatch && request.method === "PUT") {
+    const turmaId = Number(studentSignupLinkMatch[1]);
+    const turma = getTurmaOrFail(turmaId);
+    ensureTurmaAccess(session, turma);
+    if (!isAdmin(session) && turma.user_id !== session.id) {
+      sendJson(response, 403, { error: "Apenas o dirigente responsável pode ativar/desativar este link." });
+      return;
+    }
+    const body = await readJsonBody(request);
+    const enabled = body.enabled === false ? 0 : 1;
+    updateTurmaStudentSignupLinkEnabledStmt.run(enabled, turmaId);
+    sendJson(response, 200, { turma: mapTurma(getTurmaOrFail(turmaId)) });
+    return;
+  }
+
   const archiveMatch = url.pathname.match(/^\/api\/turmas\/(\d+)\/archive$/);
   if (archiveMatch && request.method === "POST") {
     const turmaId = Number(archiveMatch[1]);
@@ -1562,6 +1624,7 @@ function initializeDatabase() {
       telefone TEXT,
       whatsapp TEXT,
       email TEXT,
+      student_signup_link_enabled INTEGER NOT NULL DEFAULT 1,
       archived_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1598,6 +1661,7 @@ function initializeDatabase() {
   ensureColumn("turmas", "telefone", "TEXT");
   ensureColumn("turmas", "whatsapp", "TEXT");
   ensureColumn("turmas", "email", "TEXT");
+  ensureColumn("turmas", "student_signup_link_enabled", "INTEGER NOT NULL DEFAULT 1");
   ensureColumn("turmas", "horarios", "TEXT");
   ensureColumn("turmas", "alunos_json", "TEXT");
   ensureColumn("turma_secretary_invite_links", "expires_at", "TEXT");
@@ -1970,8 +2034,10 @@ function serveStatic(pathname, response) {
   };
 
   const extension = path.extname(filePath);
+  const isHtml = extension === ".html";
   response.writeHead(200, {
     "Content-Type": extensions[extension] || "application/octet-stream",
+    "Cache-Control": isHtml ? "no-store, max-age=0" : "public, max-age=300",
   });
   fs.createReadStream(filePath).pipe(response);
 }
@@ -2352,6 +2418,7 @@ function mapTurma(row) {
     telefone: row.telefone || "",
     whatsapp: row.whatsapp || "",
     email: row.email || "",
+    studentSignupLinkEnabled: Number(row.student_signup_link_enabled) !== 0,
     archivedAt: row.archived_at || null,
     updatedAt: row.updated_at,
   };
@@ -2628,6 +2695,11 @@ function resolvePublicProgramTurmaId(token) {
 function buildPublicProgramUrl(request, token) {
   const { protocol, host } = resolveRequestOrigin(request);
   return `${protocol}://${host}/?shareToken=${encodeURIComponent(token)}`;
+}
+
+function buildPublicStudentSignupUrl(request, token) {
+  const { protocol, host } = resolveRequestOrigin(request);
+  return `${protocol}://${host}/public/alunos/${encodeURIComponent(token)}`;
 }
 
 function buildAppHomeUrl(request) {
