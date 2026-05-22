@@ -3547,8 +3547,8 @@ function updateAccessControlledTabs() {
     }
     if (hasAppAccess() && target && target !== "turmas" && target !== "login" && target !== "cadastro") {
       tab.hidden = true;
-      tab.disabled = true;
-      tab.classList.add("is-disabled");
+      tab.disabled = false;
+      tab.classList.remove("is-disabled");
       return;
     }
     const isAuthTab = target === "login" || target === "cadastro";
