@@ -1424,8 +1424,8 @@ async function handleApi(request, response, url) {
     const turmaId = Number(studentSignupLinkMatch[1]);
     const turma = getTurmaOrFail(turmaId);
     ensureTurmaAccess(session, turma);
-    if (!isAdmin(session) && turma.user_id !== session.id) {
-      sendJson(response, 403, { error: "Apenas o dirigente responsável pode ativar/desativar este link." });
+    if (!["Dirigente", "Secretário"].includes(String(session.role || ""))) {
+      sendJson(response, 403, { error: "Apenas dirigentes e secretários da turma podem ativar/desativar este link." });
       return;
     }
     const body = await readJsonBody(request);

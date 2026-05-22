@@ -4021,8 +4021,8 @@ function renderProgramShareCard() {
   const hasStudentSignupLink = Boolean(studentSignupLink);
   const currentTurma = findCurrentTurma();
   const isStudentSignupEnabled = currentTurma?.studentSignupLinkEnabled !== false;
-  const canManageStudentSignupLink = Boolean(state.session)
-    && (state.session.role === "Admin" || state.session.id === currentTurma?.ownerUserId);
+  const canManageStudentSignupLink = hasAppAccess()
+    && ["Dirigente", "Secretário"].includes(String(state.session?.role || ""));
   if (shareProgramUrlInput) {
     shareProgramUrlInput.value = state.currentProgramShareUrl || "";
   }
@@ -4065,7 +4065,7 @@ function renderProgramShareCard() {
     shareStudentSignupStatus.hidden = !shouldExposeStudentSignup;
     shareStudentSignupStatus.textContent = isStudentSignupEnabled
       ? "Link de cadastro ativo para esta turma."
-      : "Link de cadastro desativado pelo dirigente.";
+      : "Link de cadastro desativado para esta turma.";
   }
 }
 
