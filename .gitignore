@@ -3,3 +3,14 @@ server.pid
 server.log
 node_modules/
 .env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/

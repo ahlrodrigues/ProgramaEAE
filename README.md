@@ -29,6 +29,10 @@ Plataforma inicial para gestão de turmas escolares e seus programas de aulas.
 - Registro de vínculo por turma com suporte a múltiplas turmas por secretário (`turma_members`)
 - Permissões de convite para `Admin`, `Dirigente` e `Secretário` com acesso ativo
 - Link público de visualização do programa (somente leitura, sem login)
+- Link público exclusivo por turma para auto-cadastro de alunos (`Nome`, `E-mail`, `Mensageiro`)
+- Página pública dedicada de auto-cadastro (`/public/alunos/:token`) com layout próprio
+- Controle por turma para habilitar/desabilitar link público de auto-cadastro
+- Permissão de gestão do link de auto-cadastro para `Dirigente` e `Secretário` da turma
 - Recuperação de senha por e-mail com token e redefinição de senha
 - Alteração de senha para usuário autenticado
 
@@ -111,9 +115,13 @@ npm run server:status
 - `DELETE /api/turmas/:id`
 - `POST /api/turmas/:id/archive`
 - `GET /api/turmas/:id/share-link`
+- `GET /api/turmas/:id/student-signup-link`
+- `PUT /api/turmas/:id/student-signup-link`
 - `PUT /api/turmas/:id/program`
 - `DELETE /api/turmas/:id/program`
 - `GET /api/public/programa/:token`
+- `GET /api/public/turma/:token`
+- `POST /api/public/programa/:token/alunos`
 - `POST /api/secretary-invite-links/:token/accept`
 
 ## Roadmap
@@ -131,6 +139,10 @@ npm run server:status
 - Ação de exclusão de turma com modal padrão do projeto.
 - Exclusão de turma permitida para `Admin` e dirigente responsável pela turma.
 - Cancelamento explícito de convite pendente de secretário direto na UI da turma.
+- Link público de auto-cadastro de alunos por turma implementado com formulário dedicado.
+- Toggle de `Desativar link`/`Habilitar link` com modal padrão de confirmação.
+- Bloqueio público do auto-cadastro quando o link estiver desativado.
+- Toasts de feedback padronizados no canto superior direito (app e formulário público).
 
 ### Próximas entregas (priorizadas)
 

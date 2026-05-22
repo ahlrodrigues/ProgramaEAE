@@ -6,6 +6,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$ROOT_DIR/server.pid"
 HOST="${HOST:-127.0.0.1}"
 PORT="${PORT:-3000}"
+HEALTH_PATH="${HEALTH_PATH:-/}"
+MAX_WAIT_SECONDS="${MAX_WAIT_SECONDS:-15}"
 
 stop_pid_file_process() {
   if [[ ! -f "$PID_FILE" ]]; then
@@ -40,11 +42,15 @@ stop_port_processes() {
   elif command -v fuser >/dev/null 2>&1; then
     mapfile -t pids < <(fuser -n tcp "$PORT" 2>/dev/null | tr ' ' '\n' | sed '/^$/d' | sort -u)
   else
-    echo "Aviso: nem lsof nem fuser estão disponíveis para liberar a porta $PORT."
-    return 0
+    echo "Aviso: nem lsof nem fuser estão disponíveis para liberar a porta $PORT. Tentando fallback por processo."
   fi
 
   if [[ "${#pids[@]}" -eq 0 ]]; then
+    if command -v pkill >/dev/null 2>&1; then
+      # Fallback: encerra possíveis instâncias antigas do servidor deste projeto.
+      pkill -f "node server.js" 2>/dev/null || true
+      sleep 1
+    fi
     return 0
   fi
 
@@ -64,7 +70,70 @@ stop_port_processes() {
   fi
 }
 
+is_port_busy() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -tiTCP:"$PORT" -sTCP:LISTEN -n -P >/dev/null 2>&1
+    return $?
+  fi
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -n tcp "$PORT" >/dev/null 2>&1
+    return $?
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$PORT$"
+    return $?
+  fi
+  return 1
+}
+
+wait_server_ready() {
+  local elapsed=0
+  while (( elapsed < MAX_WAIT_SECONDS )); do
+    if [[ -f "$PID_FILE" ]]; then
+      local pid
+      pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+      if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        if command -v curl >/dev/null 2>&1; then
+          if curl -sSf "http://$HOST:$PORT$HEALTH_PATH" >/dev/null 2>&1; then
+            return 0
+          fi
+        else
+          if is_port_busy; then
+            return 0
+          fi
+        fi
+      fi
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  return 1
+}
+
 cd "$ROOT_DIR"
 stop_pid_file_process
 stop_port_processes
+
+if is_port_busy; then
+  if command -v pkill >/dev/null 2>&1; then
+    echo "Tentando fallback final: encerrando processos 'node server.js'."
+    pkill -f "node server.js" 2>/dev/null || true
+    sleep 1
+  fi
+fi
+
+if is_port_busy; then
+  echo "Falha: a porta $PORT continua ocupada após tentativa de parada."
+  exit 1
+fi
+
 bash scripts/server-local.sh start
+
+if ! wait_server_ready; then
+  echo "Falha: servidor não ficou pronto após reinício."
+  echo "Últimas linhas do log:"
+  tail -n 40 "$ROOT_DIR/server.log" || true
+  exit 1
+fi
+
+echo "Reinício concluído com sucesso."

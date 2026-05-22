@@ -28,6 +28,7 @@ const SMTP_PASS = process.env.SMTP_PASS || process.env.GMAIL_PASS || "";
 const SECRETARY_INVITE_EXPIRATION_HOURS = 48;
 const SECRETARY_INVITE_RETENTION_DAYS = 30;
 const SECRETARY_INVITE_MAINTENANCE_INTERVAL_MINUTES = 15;
+const TURMA_ARCHIVE_RETENTION_DAYS = 30;
 const smtpTransporter = EMAIL_ENABLED && SMTP_HOST && SMTP_USER && SMTP_PASS
   ? nodemailer.createTransport({
       host: SMTP_HOST,
@@ -483,6 +484,12 @@ const deleteTurmaStmt = db.prepare(`
   WHERE id = ?
 `);
 
+const purgeArchivedTurmasStmt = db.prepare(`
+  DELETE FROM turmas
+  WHERE archived_at IS NOT NULL
+    AND archived_at < datetime('now', ?)
+`);
+
 const deleteProgramStmt = db.prepare(`
   DELETE FROM programs
   WHERE turma_id = ?
@@ -641,8 +648,12 @@ const purgeOldSecretaryInviteLinksStmt = db.prepare(`
 
 ensureDefaultUsers();
 runSecretaryInviteMaintenance();
+runTurmaArchiveMaintenance();
 setInterval(
-  runSecretaryInviteMaintenance,
+  () => {
+    runSecretaryInviteMaintenance();
+    runTurmaArchiveMaintenance();
+  },
   SECRETARY_INVITE_MAINTENANCE_INTERVAL_MINUTES * 60 * 1000
 );
 
@@ -1424,7 +1435,11 @@ async function handleApi(request, response, url) {
     const turmaId = Number(studentSignupLinkMatch[1]);
     const turma = getTurmaOrFail(turmaId);
     ensureTurmaAccess(session, turma);
-    if (!["Dirigente", "Secretário"].includes(String(session.role || ""))) {
+    const isOwner = Number(turma.user_id) === Number(session.id);
+    const member = getTurmaMemberStmt.get(turma.id, session.id);
+    const memberRole = String(member?.role || "");
+    const canManage = isOwner || ["Dirigente", "Secretário"].includes(memberRole);
+    if (!canManage) {
       sendJson(response, 403, { error: "Apenas dirigentes e secretários da turma podem ativar/desativar este link." });
       return;
     }
@@ -2168,6 +2183,14 @@ function runSecretaryInviteMaintenance() {
   }
 }
 
+function runTurmaArchiveMaintenance() {
+  try {
+    purgeArchivedTurmasStmt.run(`-${TURMA_ARCHIVE_RETENTION_DAYS} days`);
+  } catch (error) {
+    console.log(`[manutencao turmas] Falha ao processar limpeza automática: ${error.message}`);
+  }
+}
+
 function normalizeTurmaType(value, existingTurma) {
   const type = optionalText(value) || existingTurma?.tipo || "CB";
   if (["CB", "EAE", "LE"].includes(type)) {
@@ -2396,6 +2419,7 @@ function compareAccessEvents(a, b) {
 
 function mapTurma(row) {
   const secretarios = withSecretaryInviteStatus(row.id, parseSecretarios(row.secretarios_json));
+  const archivedAt = row.archived_at || null;
   return {
     id: row.id,
     ownerUserId: row.user_id,
@@ -2419,9 +2443,26 @@ function mapTurma(row) {
     whatsapp: row.whatsapp || "",
     email: row.email || "",
     studentSignupLinkEnabled: Number(row.student_signup_link_enabled) !== 0,
-    archivedAt: row.archived_at || null,
+    archivedAt,
+    archivedRetentionDays: TURMA_ARCHIVE_RETENTION_DAYS,
+    archivedRemovalDeadline: archivedAt
+      ? addDaysToTimestamp(archivedAt, TURMA_ARCHIVE_RETENTION_DAYS)
+      : null,
     updatedAt: row.updated_at,
   };
+}
+
+function addDaysToTimestamp(timestamp, days) {
+  if (!timestamp) {
+    return null;
+  }
+  const isoLike = String(timestamp).replace(" ", "T");
+  const date = new Date(isoLike);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function withSecretaryInviteStatus(turmaId, secretarios) {

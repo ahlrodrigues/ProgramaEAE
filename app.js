@@ -1310,7 +1310,16 @@ function renderTurmaList() {
     return;
   }
 
-  state.turmas.forEach((turma) => {
+  const sortedTurmas = [...state.turmas].sort((a, b) => {
+    const aArchived = Boolean(a?.archivedAt);
+    const bArchived = Boolean(b?.archivedAt);
+    if (aArchived !== bArchived) {
+      return aArchived ? 1 : -1;
+    }
+    return String(a?.nome || "").localeCompare(String(b?.nome || ""), "pt-BR", { sensitivity: "base" });
+  });
+
+  sortedTurmas.forEach((turma) => {
     const card = document.createElement("div");
     card.className = "turma-card";
 
@@ -1333,8 +1342,30 @@ function renderTurmaList() {
     const meta = document.createElement("span");
     meta.textContent = buildTurmaCardSummary(turma);
     button.appendChild(meta);
+    if (turma.archivedAt) {
+      const warning = document.createElement("span");
+      warning.className = "turma-archived-warning";
+      warning.textContent = buildTurmaArchiveRemovalWarning(turma);
+      button.appendChild(warning);
+    }
 
     card.appendChild(button);
+
+    const cardActions = document.createElement("div");
+    cardActions.className = "turma-card-actions";
+
+    const archiveInlineButton = document.createElement("button");
+    archiveInlineButton.type = "button";
+    archiveInlineButton.className = "ghost-action";
+    archiveInlineButton.textContent = turma.archivedAt ? "Desarquivar" : "Arquivar";
+    archiveInlineButton.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state.currentTurmaId = turma.id;
+      await confirmAndToggleTurmaArchive(turma);
+    });
+    cardActions.appendChild(archiveInlineButton);
+    card.appendChild(cardActions);
 
     const pendingRequests = (state.linkRequests || []).filter((request) => (
       Number(request.turmaId) === Number(turma.id) && request.status === "pending"
@@ -1377,6 +1408,21 @@ function renderTurmaList() {
 
     turmaList.appendChild(card);
   });
+}
+
+async function confirmAndToggleTurmaArchive(turma) {
+  const isArchived = Boolean(turma?.archivedAt);
+  const confirmed = await showConfirmActionDialog({
+    title: isArchived ? "Desarquivar turma" : "Arquivar turma",
+    message: isArchived
+      ? "Deseja desarquivar esta turma agora?"
+      : "Deseja arquivar esta turma? O programa continuará salvo e poderá ser restaurado.",
+    confirmLabel: isArchived ? "Desarquivar" : "Arquivar",
+  });
+  if (!confirmed) {
+    return;
+  }
+  await archiveCurrentTurma(!isArchived);
 }
 
 function renderTurmaForm(turma = null) {
@@ -2041,6 +2087,16 @@ function formatDateTime(value) {
   }
 
   return String(value).replace("T", " ").slice(0, 19);
+}
+
+function formatDateBr(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return raw || "não informada";
+  }
+  const [, year, month, day] = match;
+  return `${day}/${month}/${year}`;
 }
 
 function renderTurmaActions(turma = null) {
@@ -3016,6 +3072,18 @@ function buildTurmaCardSummary(turma) {
   return parts.filter(Boolean).join(" - ");
 }
 
+function buildTurmaArchiveRemovalWarning(turma) {
+  const deadline = formatDateBr(turma?.archivedRemovalDeadline || "");
+  const days = Number(turma?.archivedRetentionDays || 0);
+  if (deadline && deadline !== "não informada") {
+    return `Turma arquivada. Remoção automática prevista para ${deadline}.`;
+  }
+  if (days > 0) {
+    return `Turma arquivada. Remoção automática prevista em ${days} dias.`;
+  }
+  return "Turma arquivada. Esta turma será removida automaticamente conforme prazo do backend.";
+}
+
 function getProgramStartDateForCurrentTab(fallbackValue = "") {
   if (state.currentProgramTab !== "programa-cb") {
     return fallbackValue;
@@ -3543,11 +3611,14 @@ async function archiveCurrentTurma(archive) {
     state.currentScope = response.turma.archivedAt ? "archived" : "active";
     renderScopeButtons();
     await loadTurmas(response.turma.id);
-    turmaSummary.textContent = response.turma.archivedAt
+    const successMessage = response.turma.archivedAt
       ? "Turma arquivada com sucesso."
       : "Turma restaurada com sucesso.";
+    turmaSummary.textContent = successMessage;
+    showToast("success", response.turma.archivedAt ? "Turma arquivada" : "Turma desarquivada", successMessage);
   } catch (error) {
     turmaSummary.textContent = error.message;
+    showToast("error", "Erro ao atualizar turma", error.message);
   }
 }
 
