@@ -4,87 +4,130 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cadastro de Alunos - EAE</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;700&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css?v=20260522-1" />
     <style>
-      :root {
-        --bg: #f3f6fb;
-        --card: #ffffff;
-        --text: #1f2937;
-        --muted: #6b7280;
-        --primary: #0f766e;
-        --primary-contrast: #ffffff;
-        --border: #d1d5db;
-        --ok: #166534;
-        --error: #b91c1c;
-      }
-      * { box-sizing: border-box; }
       body {
-        margin: 0;
-        font-family: Manrope, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        color: var(--text);
-        background: radial-gradient(circle at 10% 10%, #e0f2fe 0%, var(--bg) 45%);
         min-height: 100vh;
-        display: grid;
-        place-items: center;
-        padding: 20px;
+      }
+      .page-shell {
+        grid-template-columns: 1fr;
+      }
+      .workspace {
+        max-width: 860px;
+        width: 100%;
+        margin: 0 auto;
       }
       .card {
         width: 100%;
-        max-width: 680px;
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
-        padding: 20px;
+        max-width: 760px;
+        margin: 0 auto;
       }
-      h1 { margin: 0 0 8px; font-size: 1.4rem; }
-      p { margin: 0 0 10px; color: var(--muted); }
+      .card h1 {
+        margin: 0 0 8px;
+        font-size: 1.7rem;
+        line-height: 1.2;
+      }
+      .card p { margin: 0 0 10px; }
       form { margin-top: 16px; display: grid; gap: 12px; }
       label { display: grid; gap: 6px; font-weight: 600; }
-      input {
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 10px 12px;
-        font: inherit;
+      input { padding: 10px 12px; }
+      .mensageiro-field input {
+        width: 100%;
       }
-      button {
-        margin-top: 4px;
-        border: 0;
-        border-radius: 10px;
-        padding: 11px 14px;
-        font: inherit;
-        font-weight: 700;
-        color: var(--primary-contrast);
-        background: var(--primary);
-        cursor: pointer;
-      }
+      button { margin-top: 4px; }
       button:disabled { opacity: 0.65; cursor: wait; }
       .feedback { margin-top: 10px; font-weight: 600; min-height: 22px; }
-      .feedback.ok { color: var(--ok); }
-      .feedback.error { color: var(--error); }
+      .feedback.ok { color: #166534; }
+      .feedback.error { color: #b91c1c; }
+      .header-info {
+        font-weight: 600;
+      }
+      .turma-info-card {
+        margin: 8px 0 2px;
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: rgba(214, 240, 235, 0.35);
+      }
+      .turma-info-card .header-info {
+        margin: 0;
+        font-weight: 800;
+        color: var(--ink);
+      }
+      .toast-region {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        z-index: 2000;
+        width: min(360px, calc(100vw - 32px));
+        display: grid;
+        gap: 10px;
+      }
+      .toast {
+        border-radius: 12px;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1e3a8a;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.14);
+        padding: 12px 14px;
+      }
+      .toast.is-success {
+        border-color: #bbf7d0;
+        background: #f0fdf4;
+        color: #166534;
+      }
+      .toast.is-error {
+        border-color: #fecaca;
+        background: #fef2f2;
+        color: #991b1b;
+      }
+      .toast strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 0.92rem;
+      }
+      .toast p {
+        margin: 0;
+        font-size: 0.88rem;
+        color: inherit;
+      }
     </style>
   </head>
   <body>
-    <main class="card">
-      <h1>Cadastro de aluno na turma</h1>
-      <p>Preencha os dados para vincular o aluno automaticamente.</p>
-      <p id="turma-info">Carregando turma...</p>
-      <form id="signup-form">
-        <label>
-          <span>Nome</span>
-          <input type="text" name="nome" required placeholder="Nome completo" />
-        </label>
-        <label>
-          <span>E-mail</span>
-          <input type="email" name="email" required placeholder="aluno@exemplo.org" />
-        </label>
-        <label>
-          <span>Mensageiro</span>
-          <input type="text" name="mensageiro" placeholder="(00) 00000-0000" />
-        </label>
-        <button type="submit" id="submit-btn">Cadastrar aluno</button>
-      </form>
-      <p class="feedback" id="feedback"></p>
-    </main>
+    <div class="page-shell">
+      <main class="workspace">
+        <section class="card saved-summary stack-card">
+          <h1>Cadastro de aluno na turma</h1>
+          <p class="list-hint">Preencha os dados para vincular-se automaticamente:</p>
+          <div class="turma-info-card">
+            <p id="turma-info" class="header-info">Carregando turma...</p>
+          </div>
+          <form id="signup-form" class="card-grid two-columns">
+            <label class="full-row-field">
+              <span>Nome</span>
+              <input type="text" name="nome" required placeholder="Nome completo" />
+            </label>
+            <label>
+              <span>E-mail</span>
+              <input type="email" name="email" required placeholder="aluno@exemplo.org" />
+            </label>
+            <label class="mensageiro-field">
+              <span>Mensageiro</span>
+              <input type="text" name="mensageiro" placeholder="(00) 00000-0000" />
+            </label>
+            <div class="inline-actions form-inline-actions full-row-field">
+              <button type="submit" id="submit-btn" class="primary-action">Cadastrar aluno</button>
+            </div>
+          </form>
+          <p class="feedback" id="feedback"></p>
+        </section>
+      </main>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
     <script>
       (function () {
@@ -93,10 +136,42 @@
         const form = document.getElementById("signup-form");
         const feedback = document.getElementById("feedback");
         const submitBtn = document.getElementById("submit-btn");
+        const toastRegion = document.getElementById("toast-region");
+        let toastDismissTimer = null;
 
         function setFeedback(message, type) {
           feedback.textContent = message || "";
           feedback.className = "feedback" + (type ? " " + type : "");
+        }
+
+        function formatDateBR(value) {
+          const text = String(value || "").trim();
+          if (!text) return "não informado";
+          const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+          if (!match) return text;
+          return match[3] + "/" + match[2] + "/" + match[1];
+        }
+
+        function showToast(kind, title, message) {
+          if (!toastRegion) return;
+          if (toastDismissTimer) {
+            window.clearTimeout(toastDismissTimer);
+            toastDismissTimer = null;
+          }
+          toastRegion.replaceChildren();
+          const toast = document.createElement("div");
+          toast.className = "toast " + (kind === "error" ? "is-error" : "is-success");
+          const heading = document.createElement("strong");
+          heading.textContent = title || "";
+          const body = document.createElement("p");
+          body.textContent = message || "";
+          toast.appendChild(heading);
+          toast.appendChild(body);
+          toastRegion.appendChild(toast);
+          toastDismissTimer = window.setTimeout(function () {
+            toast.remove();
+            toastDismissTimer = null;
+          }, 3200);
         }
 
         async function loadTurma() {
@@ -115,12 +190,12 @@
             return;
           }
           const turma = data.turma || {};
-          turmaInfo.textContent = [
-            "Turma: " + (turma.nome || "não informada"),
-            "Tipo: " + (turma.tipo || "não informado"),
-            "Modalidade: " + (turma.modalidade || "não informada"),
-            "Início: " + (turma.inicio || "não informado")
-          ].join(" · ");
+          const dirigente = turma.dirigenteNome || turma.ownerName || "não informado";
+          turmaInfo.textContent = "Turma: " + (turma.nome || "não informada")
+            + " · Tipo: " + (turma.tipo || "não informado")
+            + " · Modalidade: " + (turma.modalidade || "não informada")
+            + " · Início: " + formatDateBR(turma.inicio)
+            + " · Dirigente: " + dirigente;
           setFeedback("");
         }
 
@@ -142,8 +217,10 @@
             }
             form.reset();
             setFeedback((data.aluno && data.aluno.nome ? data.aluno.nome : "Aluno") + " cadastrado(a) com sucesso.", "ok");
+            showToast("success", "Cadastro salvo", "Aluno cadastrado com sucesso nesta turma.");
           } catch (error) {
             setFeedback(error.message || "Erro ao cadastrar aluno.", "error");
+            showToast("error", "Erro no cadastro", error.message || "Não foi possível concluir o cadastro.");
           } finally {
             submitBtn.disabled = false;
           }

@@ -33,11 +33,17 @@ stop_pid_file_process() {
 }
 
 stop_port_processes() {
-  if ! command -v lsof >/dev/null 2>&1; then
+  local pids=()
+
+  if command -v lsof >/dev/null 2>&1; then
+    mapfile -t pids < <(lsof -tiTCP:"$PORT" -sTCP:LISTEN -n -P 2>/dev/null | sort -u)
+  elif command -v fuser >/dev/null 2>&1; then
+    mapfile -t pids < <(fuser -n tcp "$PORT" 2>/dev/null | tr ' ' '\n' | sed '/^$/d' | sort -u)
+  else
+    echo "Aviso: nem lsof nem fuser estão disponíveis para liberar a porta $PORT."
     return 0
   fi
 
-  mapfile -t pids < <(lsof -tiTCP:"$PORT" -sTCP:LISTEN -n -P 2>/dev/null | sort -u)
   if [[ "${#pids[@]}" -eq 0 ]]; then
     return 0
   fi
@@ -46,7 +52,12 @@ stop_port_processes() {
   kill "${pids[@]}" 2>/dev/null || true
   sleep 1
 
-  mapfile -t remaining < <(lsof -tiTCP:"$PORT" -sTCP:LISTEN -n -P 2>/dev/null | sort -u)
+  local remaining=()
+  if command -v lsof >/dev/null 2>&1; then
+    mapfile -t remaining < <(lsof -tiTCP:"$PORT" -sTCP:LISTEN -n -P 2>/dev/null | sort -u)
+  elif command -v fuser >/dev/null 2>&1; then
+    mapfile -t remaining < <(fuser -n tcp "$PORT" 2>/dev/null | tr ' ' '\n' | sed '/^$/d' | sort -u)
+  fi
   if [[ "${#remaining[@]}" -gt 0 ]]; then
     echo "Forcando encerramento do(s) PID(s): ${remaining[*]}"
     kill -9 "${remaining[@]}" 2>/dev/null || true
