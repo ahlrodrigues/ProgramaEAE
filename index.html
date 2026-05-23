@@ -61,8 +61,9 @@
           <button class="tab is-active" data-tab-target="login">Login</button>
           <button class="tab" data-tab-target="cadastro">Cadastro</button>
           <button class="tab" data-tab-target="turmas">Turmas</button>
+          <button class="tab" data-tab-target="alunos-turma">Alunos da Turma</button>
           <button id="tab-programa-contexto" class="tab" type="button" hidden>Programa</button>
-          <button id="tab-lista-contexto" class="tab" type="button" hidden>Lista</button>
+          <button id="tab-lista-contexto" class="tab" data-tab-target="lista-presenca" type="button" hidden>Lista de presença</button>
           <button class="tab" data-tab-target="programa-cb" data-tab-panel-target="programa">
             Programa CB
           </button>
@@ -319,6 +320,25 @@
             </div>
           </form>
 
+          <div class="saved-summary" id="turma-summary" hidden>
+            Nenhuma turma cadastrada ainda.
+          </div>
+
+          <div class="inline-actions stack-card" id="turma-actions" hidden>
+            <button id="archive-turma-button" type="button" class="ghost-action">Arquivar turma</button>
+            <button id="restore-turma-button" type="button" class="ghost-action" hidden>
+              Restaurar turma
+            </button>
+            <button id="delete-turma-button" type="button" class="danger-action" hidden>
+              Excluir turma
+            </button>
+          </div>
+        </section>
+
+        <section class="panel" data-tab-panel="alunos-turma">
+          <div class="section-head section-head-wide">
+            <p>Gerencie os alunos vinculados à turma selecionada, incluindo importação e link público de cadastro.</p>
+          </div>
           <section class="saved-summary students-panel" id="students-panel" hidden>
             <div class="students-panel-head">
               <div class="inline-title">
@@ -368,54 +388,6 @@
               </table>
             </div>
           </section>
-
-          <section class="saved-summary students-panel" id="attendance-panel" hidden>
-            <div class="students-panel-head">
-              <div class="inline-title">
-                <h4>Presença em aula</h4>
-                <p id="attendance-feedback">Selecione uma aula para marcar presença dos alunos.</p>
-              </div>
-            </div>
-            <form id="attendance-form" class="card-grid">
-              <label>
-                <span>Aula do programa</span>
-                <select id="attendance-lesson-select" name="lessonKey"></select>
-              </label>
-              <div class="students-table-wrapper">
-                <table class="students-table">
-                  <thead>
-                    <tr>
-                      <th>Aluno</th>
-                      <th>E-mail</th>
-                      <th>Presente</th>
-                    </tr>
-                  </thead>
-                  <tbody id="attendance-table-body">
-                    <tr>
-                      <td colspan="3">Selecione uma turma com alunos e programa preenchido.</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <div class="inline-actions form-inline-actions">
-                <button id="save-attendance-button" type="submit" class="primary-action">Salvar presença</button>
-              </div>
-            </form>
-          </section>
-
-          <div class="saved-summary" id="turma-summary" hidden>
-            Nenhuma turma cadastrada ainda.
-          </div>
-
-          <div class="inline-actions stack-card" id="turma-actions" hidden>
-            <button id="archive-turma-button" type="button" class="ghost-action">Arquivar turma</button>
-            <button id="restore-turma-button" type="button" class="ghost-action" hidden>
-              Restaurar turma
-            </button>
-            <button id="delete-turma-button" type="button" class="danger-action" hidden>
-              Excluir turma
-            </button>
-          </div>
         </section>
 
         <section class="panel" data-tab-panel="programa">
@@ -495,6 +467,45 @@
           <div class="table-wrapper">
             <table id="program-table"></table>
           </div>
+        </section>
+
+        <section class="panel" data-tab-panel="lista-presenca">
+          <div class="section-head section-head-wide">
+            <p>Marque presença por aula usando os alunos vinculados à turma selecionada e o cronograma do programa.</p>
+          </div>
+          <section class="saved-summary students-panel" id="attendance-panel">
+            <div class="students-panel-head">
+              <div class="inline-title">
+                <h4>Lista de presença</h4>
+                <p id="attendance-feedback">Selecione uma aula para marcar presença dos alunos.</p>
+              </div>
+            </div>
+            <form id="attendance-form" class="card-grid">
+              <label>
+                <span>Aula do programa</span>
+                <select id="attendance-lesson-select" name="lessonKey"></select>
+              </label>
+              <div class="students-table-wrapper">
+                <table class="students-table">
+                  <thead>
+                    <tr>
+                      <th>Aluno</th>
+                      <th>E-mail</th>
+                      <th>Presente</th>
+                    </tr>
+                  </thead>
+                  <tbody id="attendance-table-body">
+                    <tr>
+                      <td colspan="3">Selecione uma turma com alunos e programa preenchido.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="inline-actions form-inline-actions">
+                <button id="save-attendance-button" type="submit" class="primary-action">Salvar presença</button>
+              </div>
+            </form>
+          </section>
         </section>
       </main>
     </div>

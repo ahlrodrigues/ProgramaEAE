@@ -67,6 +67,7 @@ const turmasTitle = document.querySelector("#turmas-title");
 const turmasListHint = document.querySelector("#turmas-list-hint");
 const tabProgramaContexto = document.querySelector("#tab-programa-contexto");
 const tabListaContexto = document.querySelector("#tab-lista-contexto");
+const tabAlunosTurma = document.querySelector('[data-tab-target="alunos-turma"]');
 const authNotice = document.querySelector("#auth-notice");
 const pendingInvites = document.querySelector("#pending-invites");
 const linkRequestPanel = document.querySelector("#link-request-panel");
@@ -502,8 +503,16 @@ function setupTabs() {
         return;
       }
       const targetPanel = tab.dataset.tabPanelTarget || tab.dataset.tabTarget;
+      if (!targetPanel) {
+        return;
+      }
       if (targetPanel === "programa" && tab.dataset.tabTarget) {
-        state.currentProgramTab = tab.dataset.tabTarget;
+        if (tab.dataset.tabTarget === "programa-cb" && state.currentTurmaId) {
+          const turmaProgramTab = getProgramTabForTurmaType(getCurrentTurmaProgramType());
+          state.currentProgramTab = turmaProgramTab || tab.dataset.tabTarget;
+        } else {
+          state.currentProgramTab = tab.dataset.tabTarget;
+        }
       }
       tabs.forEach((item) => item.classList.toggle("is-active", item === tab));
       panels.forEach((panel) => {
@@ -538,12 +547,25 @@ function setupTabs() {
       if (targetPanel === "turmas") {
         state.isCreatingTurma = false;
         state.isTurmaDetailsOpen = false;
+        updateAccessControlledTabs();
         renderTurmaList();
         renderTurmaForm();
         renderTurmaActions();
         renderTurmaShortcuts();
         turmaSummary.hidden = true;
         turmaSummary.textContent = "Clique em uma turma para visualizar ou editar os dados.";
+        return;
+      }
+
+      if (targetPanel === "alunos-turma") {
+        if (!state.currentTurmaId) {
+          studentsImportFeedback.textContent = "Selecione uma turma para gerenciar os alunos.";
+          renderStudentsPanel();
+          return;
+        }
+        selectTurma(state.currentTurmaId).catch((error) => {
+          studentsImportFeedback.textContent = error.message;
+        });
         return;
       }
 
@@ -1477,13 +1499,12 @@ async function openTurmaProgramFromList(turmaId) {
   await selectTurma(turmaId);
   const turma = findCurrentTurma();
   state.currentProgramTab = getProgramTabForTurmaType(turma?.tipo) || "programa-cb";
-  activateTab("programa-cb");
+  activateTab(state.currentProgramTab);
 }
 
 async function openTurmaAttendanceFromList(turmaId) {
   await selectTurma(turmaId);
-  activateTab("turmas");
-  attendancePanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+  activateTab("lista-presenca");
 }
 
 function renderTurmaShortcuts() {
@@ -1502,15 +1523,19 @@ function renderTurmaShortcuts() {
 
   tabProgramaContexto.textContent = `Programa ${formatTurmaTypeLabel(turma.tipo)}`;
   tabProgramaContexto.disabled = false;
-  tabListaContexto.textContent = "Lista";
+  tabListaContexto.textContent = "Lista de presença";
   tabListaContexto.disabled = false;
 }
 
 function renderTurmasHeaderCopy() {
   const hasSelectedTurma = Boolean(state.currentTurmaId && state.isTurmaDetailsOpen);
-  if (turmasEyebrow) turmasEyebrow.hidden = hasSelectedTurma;
-  if (turmasTitle) turmasTitle.hidden = hasSelectedTurma;
-  if (turmasListHint) turmasListHint.hidden = hasSelectedTurma;
+  const isCreatingTurma = Boolean(state.isCreatingTurma);
+  const shouldHideCatalogList = hasSelectedTurma || isCreatingTurma;
+  if (turmasEyebrow) turmasEyebrow.hidden = false;
+  if (turmasTitle) turmasTitle.hidden = false;
+  if (turmasListHint) turmasListHint.hidden = shouldHideCatalogList;
+  if (turmaList) turmaList.hidden = shouldHideCatalogList;
+  if (newTurmaButton) newTurmaButton.hidden = false;
 }
 
 function renderTurmaForm(turma = null) {
@@ -1614,9 +1639,26 @@ function renderTurmaSummary(turma) {
 }
 
 function renderStudentsPanel() {
-  const shouldShow = !turmaForm.hidden;
+  const studentsPanelTab = panels.find((panel) => panel.dataset.tabPanel === "alunos-turma");
+  const shouldShow = Boolean(studentsPanelTab?.classList.contains("is-active"));
   studentsPanel.hidden = !shouldShow;
   if (!shouldShow) {
+    renderAttendancePanel();
+    return;
+  }
+
+  if (!state.currentTurmaId) {
+    studentsTableBody.innerHTML = "";
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.textContent = "Selecione uma turma para exibir os alunos.";
+    row.appendChild(cell);
+    studentsTableBody.appendChild(row);
+    studentsImportFeedback.textContent = "Selecione uma turma para gerenciar os alunos.";
+    if (studentsFileInput) {
+      studentsFileInput.disabled = true;
+    }
     renderAttendancePanel();
     return;
   }
@@ -1625,7 +1667,7 @@ function renderStudentsPanel() {
     studentsFileInput.disabled = !state.isCreatingTurma && !state.isEditingTurma;
   }
 
-  const alunos = Array.isArray(state.importedStudents) ? state.importedStudents : [];
+  const alunos = getSortedStudentsWithOriginalIndex(state.importedStudents);
   studentsTableBody.innerHTML = "";
 
   if (!alunos.length) {
@@ -1643,7 +1685,7 @@ function renderStudentsPanel() {
   }
 
   studentsImportFeedback.textContent = `${alunos.length} aluno(s) carregado(s) no cadastro.`;
-  alunos.forEach((aluno, index) => {
+  alunos.forEach(({ student: aluno, originalIndex }) => {
     const row = document.createElement("tr");
     [aluno.nome, aluno.email, aluno.whatsapp].forEach((value) => {
       const cell = document.createElement("td");
@@ -1656,7 +1698,7 @@ function renderStudentsPanel() {
     const removeButton = document.createElement("button");
     removeButton.type = "button";
     removeButton.className = "ghost-action";
-    removeButton.dataset.studentRemoveIndex = String(index);
+    removeButton.dataset.studentRemoveIndex = String(originalIndex);
     removeButton.textContent = "Remover";
     actionsCell.appendChild(removeButton);
     row.appendChild(actionsCell);
@@ -1696,7 +1738,7 @@ function renderAttendancePanel() {
 
   const turma = findCurrentTurma();
   const isArchived = Boolean(turma?.archivedAt);
-  const students = Array.isArray(state.importedStudents) ? state.importedStudents : [];
+  const students = getSortedStudentsWithOriginalIndex(state.importedStudents);
   const lessons = extractAttendanceLessonsFromProgram();
 
   attendanceLessonSelect.innerHTML = "";
@@ -1722,14 +1764,12 @@ function renderAttendancePanel() {
     attendanceLessonSelect.appendChild(option);
   });
 
-  if (!lessons.some((lesson) => lesson.key === state.currentAttendanceLessonKey)) {
-    state.currentAttendanceLessonKey = lessons[0].key;
-  }
+  state.currentAttendanceLessonKey = pickAttendanceLessonKey(lessons, state.attendanceRecords);
   attendanceLessonSelect.value = state.currentAttendanceLessonKey;
   const lessonRecords = state.attendanceRecords[state.currentAttendanceLessonKey] || {};
 
-  students.forEach((student, index) => {
-    const studentKey = buildAttendanceStudentKey(student, index);
+  students.forEach(({ student, originalIndex }) => {
+    const studentKey = buildAttendanceStudentKey(student, originalIndex);
     const row = document.createElement("tr");
 
     const nameCell = document.createElement("td");
@@ -1764,6 +1804,57 @@ function renderAttendancePanel() {
   if (saveAttendanceButton) {
     saveAttendanceButton.disabled = isArchived;
   }
+}
+
+function getSortedStudentsWithOriginalIndex(students) {
+  const safeStudents = Array.isArray(students) ? students : [];
+  return safeStudents
+    .map((student, index) => ({
+      student,
+      originalIndex: index,
+      normalizedName: String(student?.nome || "").trim(),
+    }))
+    .sort((a, b) => {
+      const nameCompare = a.normalizedName.localeCompare(b.normalizedName, "pt-BR", {
+        sensitivity: "base",
+      });
+      if (nameCompare !== 0) {
+        return nameCompare;
+      }
+      return a.originalIndex - b.originalIndex;
+    });
+}
+
+function pickAttendanceLessonKey(lessons, attendanceRecords) {
+  const safeLessons = Array.isArray(lessons) ? lessons : [];
+  if (!safeLessons.length) {
+    return "";
+  }
+
+  const records = attendanceRecords && typeof attendanceRecords === "object"
+    ? attendanceRecords
+    : {};
+
+  let lastRecordedIndex = -1;
+  safeLessons.forEach((lesson, index) => {
+    const lessonRecord = records[lesson.key];
+    if (!lessonRecord || typeof lessonRecord !== "object") {
+      return;
+    }
+    if (Object.keys(lessonRecord).length > 0) {
+      lastRecordedIndex = index;
+    }
+  });
+
+  const nextLessonIndex = lastRecordedIndex + 1;
+  if (nextLessonIndex >= 0 && nextLessonIndex < safeLessons.length) {
+    return safeLessons[nextLessonIndex].key;
+  }
+  if (lastRecordedIndex >= 0) {
+    return safeLessons[lastRecordedIndex].key;
+  }
+
+  return safeLessons[0].key;
 }
 
 function appendAttendanceEmptyRow(message) {
@@ -3532,8 +3623,15 @@ function updateAccessControlledTabs() {
   }
 
   const selectedTurmaProgramType = getCurrentTurmaProgramType();
+  const shouldShowAlunosTab = Boolean(state.currentTurmaId && state.isTurmaDetailsOpen);
 
   tabs.forEach((tab) => {
+    if (tab === tabAlunosTurma) {
+      tab.hidden = !shouldShowAlunosTab;
+      tab.disabled = !shouldShowAlunosTab || !hasAppAccess();
+      tab.classList.toggle("is-disabled", tab.disabled);
+      return;
+    }
     if (tab === tabProgramaContexto || tab === tabListaContexto) {
       return;
     }
@@ -3546,6 +3644,12 @@ function updateAccessControlledTabs() {
       return;
     }
     if (hasAppAccess() && target && target !== "turmas" && target !== "login" && target !== "cadastro") {
+      if (target === "alunos-turma") {
+        tab.hidden = false;
+        tab.disabled = false;
+        tab.classList.remove("is-disabled");
+        return;
+      }
       tab.hidden = true;
       tab.disabled = false;
       tab.classList.remove("is-disabled");
@@ -3556,7 +3660,7 @@ function updateAccessControlledTabs() {
     const requiresLogin = tab.dataset.tabTarget !== "login" && tab.dataset.tabTarget !== "cadastro";
     const requiresApprovalAccess = false;
     const programType = getProgramTypeForTab(tab);
-    const requiresMatchingTurma = Boolean(programType);
+    const requiresMatchingTurma = Boolean(programType) && target !== "programa-cb";
     const isDisabledForLogin = requiresLogin && !hasAppAccess();
     const isDisabledForApprovalAccess = requiresApprovalAccess && !(canManageUserApprovals() || canInviteSecretaries());
     const isDisabledForMissingTurma = requiresMatchingTurma && (
@@ -4005,7 +4109,10 @@ function activateTab(tabName) {
         tab.dataset.tabTarget === tabName
         || tab.dataset.tabPanelTarget === tabName
       ));
-  if (nextTab) nextTab.click();
+  if (!nextTab || nextTab.classList.contains("is-active")) {
+    return;
+  }
+  nextTab.click();
 }
 
 function findCurrentTurma() {
