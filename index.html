@@ -60,7 +60,6 @@
         <nav class="tabs" aria-label="Seções principais">
           <button class="tab is-active" data-tab-target="login">Login</button>
           <button class="tab" data-tab-target="cadastro">Cadastro</button>
-          <button class="tab" data-tab-target="turmas">Turmas</button>
           <button class="tab" data-tab-target="alunos-turma">Alunos da Turma</button>
           <button id="tab-programa-contexto" class="tab" type="button" hidden>Programa</button>
           <button id="tab-lista-contexto" class="tab" data-tab-target="lista-presenca" type="button" hidden>Lista de presença</button>
@@ -242,6 +241,7 @@
               <p>Esses dados alimentam o contexto do programa e a organização da escola.</p>
               <div class="section-actions-buttons">
                 <button id="new-turma-button" type="button" class="ghost-action">Nova turma</button>
+                <button id="open-turmas-list-button" type="button" class="ghost-action">Turmas</button>
               </div>
             </div>
           </div>
@@ -500,9 +500,6 @@
                     </tr>
                   </tbody>
                 </table>
-              </div>
-              <div class="inline-actions form-inline-actions">
-                <button id="save-attendance-button" type="submit" class="primary-action">Salvar presença</button>
               </div>
             </form>
           </section>

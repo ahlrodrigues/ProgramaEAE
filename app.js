@@ -24,6 +24,7 @@ const state = {
   currentStudentSignupShareUrl: "",
   attendanceRecords: {},
   currentAttendanceLessonKey: "",
+  attendanceAutosaveNoticeShown: false,
   currentProgramShareTurmaId: null,
   isProgramShareLoading: false,
   currentProgramShareError: "",
@@ -78,6 +79,7 @@ const linkRequestSummary = document.querySelector("#link-request-summary");
 const myLinkRequestsList = document.querySelector("#my-link-requests-list");
 const logoutButton = document.querySelector("#logout-button");
 const newTurmaButton = document.querySelector("#new-turma-button");
+const openTurmasListButton = document.querySelector("#open-turmas-list-button");
 const scopeButtons = Array.from(document.querySelectorAll("[data-scope-button]"));
 const turmaActions = document.querySelector("#turma-actions");
 const ownerSelect = document.querySelector("#owner-user-id");
@@ -100,11 +102,9 @@ const confirmActionConfirmButton = document.querySelector("#confirm-action-confi
 const studentsTableBody = document.querySelector("#students-table-body");
 const studentsImportFeedback = document.querySelector("#students-import-feedback");
 const attendancePanel = document.querySelector("#attendance-panel");
-const attendanceForm = document.querySelector("#attendance-form");
 const attendanceLessonSelect = document.querySelector("#attendance-lesson-select");
 const attendanceTableBody = document.querySelector("#attendance-table-body");
 const attendanceFeedback = document.querySelector("#attendance-feedback");
-const saveAttendanceButton = document.querySelector("#save-attendance-button");
 const turmaWeekdayInput = document.querySelector("#turma-weekday");
 const toastRegion = document.querySelector("#toast-region");
 const titleInput = document.querySelector("#program-title");
@@ -163,6 +163,9 @@ const autosaveState = {
   programTimer: null,
   programInFlight: false,
   programDirty: false,
+  attendanceTimer: null,
+  attendanceInFlight: false,
+  attendanceDirty: false,
 };
 let toastDismissTimer = null;
 let inactivityTimer = null;
@@ -688,6 +691,7 @@ function setupForms() {
   newTurmaButton.addEventListener("click", () => {
     cancelAutosaveQueue("turma");
     cancelAutosaveQueue("program");
+    cancelAutosaveQueue("attendance");
     state.currentTurmaId = null;
     state.isCreatingTurma = true;
     state.isTurmaDetailsOpen = true;
@@ -705,6 +709,10 @@ function setupForms() {
     renderContactsSummary();
     turmaSummary.hidden = false;
     turmaSummary.textContent = "Preencha os dados para cadastrar uma nova turma.";
+  });
+
+  openTurmasListButton?.addEventListener("click", () => {
+    activateTab("turmas");
   });
 
   editTurmaButton?.addEventListener("click", () => {
@@ -799,11 +807,6 @@ function setupForms() {
   attendanceLessonSelect?.addEventListener("change", () => {
     state.currentAttendanceLessonKey = String(attendanceLessonSelect.value || "");
     renderAttendancePanel();
-  });
-
-  attendanceForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await saveAttendanceForCurrentTurma();
   });
 
   tabProgramaContexto?.addEventListener("click", async () => {
@@ -1304,6 +1307,7 @@ async function loadTurmas(preferredTurmaId = null) {
   if (!state.turmas.length) {
     cancelAutosaveQueue("turma");
     cancelAutosaveQueue("program");
+    cancelAutosaveQueue("attendance");
     state.currentTurmaId = null;
     state.isCreatingTurma = false;
     state.isTurmaDetailsOpen = false;
@@ -1311,6 +1315,7 @@ async function loadTurmas(preferredTurmaId = null) {
     state.importedStudents = [];
     state.attendanceRecords = {};
     state.currentAttendanceLessonKey = "";
+    state.attendanceAutosaveNoticeShown = false;
     state.program = createEmptyProgram();
     state.manualColumnWidths = {};
     renderTurmaForm();
@@ -1343,12 +1348,14 @@ async function loadTurmas(preferredTurmaId = null) {
 async function selectTurma(turmaId) {
   cancelAutosaveQueue("turma");
   cancelAutosaveQueue("program");
+  cancelAutosaveQueue("attendance");
   const response = await apiRequest(`/api/turmas/${turmaId}`);
   state.currentTurmaId = response.turma.id;
   state.currentProgramTab = getProgramTabForTurmaType(response.turma.tipo) || state.currentProgramTab;
   state.isCreatingTurma = false;
   state.isTurmaDetailsOpen = true;
   state.isEditingTurma = true;
+  state.attendanceAutosaveNoticeShown = false;
   updateTurmaInState(response.turma);
   state.program = resolveProgramForActiveTab(response.program);
   state.manualColumnWidths = {};
@@ -1712,6 +1719,7 @@ async function loadAttendanceForTurma(turmaId) {
   if (!turmaId || !state.session) {
     state.attendanceRecords = {};
     state.currentAttendanceLessonKey = "";
+    state.attendanceAutosaveNoticeShown = false;
     return;
   }
   try {
@@ -1747,13 +1755,11 @@ function renderAttendancePanel() {
   if (!students.length) {
     attendanceFeedback.textContent = "Cadastre ou importe alunos para marcar presença.";
     appendAttendanceEmptyRow("Nenhum aluno cadastrado nesta turma.");
-    if (saveAttendanceButton) saveAttendanceButton.disabled = true;
     return;
   }
   if (!lessons.length) {
     attendanceFeedback.textContent = "Preencha ao menos uma aula no programa para marcar presença.";
     appendAttendanceEmptyRow("Nenhuma aula identificada no programa.");
-    if (saveAttendanceButton) saveAttendanceButton.disabled = true;
     return;
   }
 
@@ -1764,7 +1770,10 @@ function renderAttendancePanel() {
     attendanceLessonSelect.appendChild(option);
   });
 
-  state.currentAttendanceLessonKey = pickAttendanceLessonKey(lessons, state.attendanceRecords);
+  const hasCurrentSelection = lessons.some((lesson) => lesson.key === state.currentAttendanceLessonKey);
+  state.currentAttendanceLessonKey = hasCurrentSelection
+    ? state.currentAttendanceLessonKey
+    : pickAttendanceLessonKey(lessons, state.attendanceRecords);
   attendanceLessonSelect.value = state.currentAttendanceLessonKey;
   const lessonRecords = state.attendanceRecords[state.currentAttendanceLessonKey] || {};
 
@@ -1791,6 +1800,7 @@ function renderAttendancePanel() {
         state.attendanceRecords[state.currentAttendanceLessonKey] = {};
       }
       state.attendanceRecords[state.currentAttendanceLessonKey][studentKey] = checkbox.checked;
+      scheduleAttendanceAutosave();
     });
     presentCell.appendChild(checkbox);
     row.appendChild(presentCell);
@@ -1800,10 +1810,7 @@ function renderAttendancePanel() {
 
   attendanceFeedback.textContent = isArchived
     ? "Turma arquivada: restaure a turma para editar presença."
-    : "Marque as presenças e salve ao final.";
-  if (saveAttendanceButton) {
-    saveAttendanceButton.disabled = isArchived;
-  }
+    : "Marque as presenças. O salvamento é automático.";
 }
 
 function getSortedStudentsWithOriginalIndex(students) {
@@ -1903,7 +1910,7 @@ function buildAttendanceStudentKey(student, index) {
   return `aluno:${index}`;
 }
 
-async function saveAttendanceForCurrentTurma() {
+async function saveAttendanceForCurrentTurma({ autosave = false } = {}) {
   const turmaId = state.currentTurmaId;
   if (!turmaId) {
     return;
@@ -1917,9 +1924,64 @@ async function saveAttendanceForCurrentTurma() {
     state.attendanceRecords = response?.records && typeof response.records === "object"
       ? response.records
       : state.attendanceRecords;
+    if (autosave) {
+      attendanceFeedback.textContent = "Presença salva automaticamente.";
+      if (!state.attendanceAutosaveNoticeShown) {
+        state.attendanceAutosaveNoticeShown = true;
+        void showInfoDialog({
+          title: "Salvamento automático",
+          message: "A lista de presença foi salva automaticamente.",
+        });
+      }
+      return;
+    }
+    attendanceFeedback.textContent = "Presença salva com sucesso.";
     showToast("success", "Presença salva", "A presença da aula foi registrada com sucesso.");
   } catch (error) {
-    showToast("error", "Erro ao salvar presença", error.message);
+    if (!autosave) {
+      showToast("error", "Erro ao salvar presença", error.message);
+    }
+    throw error;
+  }
+}
+
+function scheduleAttendanceAutosave() {
+  if (!state.session || !state.currentTurmaId || !state.isTurmaDetailsOpen) {
+    return;
+  }
+  const turma = findCurrentTurma();
+  if (turma?.archivedAt) {
+    return;
+  }
+  autosaveState.attendanceDirty = true;
+  if (autosaveState.attendanceTimer) {
+    window.clearTimeout(autosaveState.attendanceTimer);
+  }
+  if (attendanceFeedback) {
+    attendanceFeedback.textContent = "Salvando presença...";
+  }
+  autosaveState.attendanceTimer = window.setTimeout(runAttendanceAutosave, AUTOSAVE_DELAY_MS);
+}
+
+async function runAttendanceAutosave() {
+  autosaveState.attendanceTimer = null;
+  if (autosaveState.attendanceInFlight || !autosaveState.attendanceDirty) {
+    return;
+  }
+  autosaveState.attendanceDirty = false;
+  autosaveState.attendanceInFlight = true;
+  try {
+    await saveAttendanceForCurrentTurma({ autosave: true });
+  } catch (error) {
+    if (attendanceFeedback) {
+      attendanceFeedback.textContent = error.message;
+    }
+    showToast("error", "Erro no salvamento automático", error.message);
+  } finally {
+    autosaveState.attendanceInFlight = false;
+    if (autosaveState.attendanceDirty) {
+      scheduleAttendanceAutosave();
+    }
   }
 }
 
@@ -2936,6 +2998,34 @@ function showConfirmActionDialog({ title, message, confirmLabel = "Confirmar" })
   });
 }
 
+function showInfoDialog({ title, message, confirmLabel = "OK" }) {
+  if (!confirmActionDialog) {
+    window.alert(message || title || "Informação");
+    return Promise.resolve();
+  }
+
+  const previousCancelDisplay = confirmActionCancelButton?.style.display || "";
+  const previousConfirmClass = confirmActionConfirmButton?.className || "";
+  const previousConfirmText = confirmActionConfirmButton?.textContent || "";
+
+  if (confirmActionCancelButton) {
+    confirmActionCancelButton.style.display = "none";
+  }
+  if (confirmActionConfirmButton) {
+    confirmActionConfirmButton.className = "primary-action";
+  }
+
+  return showConfirmActionDialog({ title, message, confirmLabel }).finally(() => {
+    if (confirmActionCancelButton) {
+      confirmActionCancelButton.style.display = previousCancelDisplay;
+    }
+    if (confirmActionConfirmButton) {
+      confirmActionConfirmButton.className = previousConfirmClass;
+      confirmActionConfirmButton.textContent = previousConfirmText;
+    }
+  });
+}
+
 function downloadStudentsTemplateFile() {
   const blob = new Blob([STUDENTS_TEMPLATE_CSV], { type: "text/csv;charset=utf-8" });
   const url = window.URL.createObjectURL(blob);
@@ -3337,6 +3427,7 @@ function renderLoggedOutState(message = "Entre ou crie uma conta para começar."
   cancelAutosaveQueue("turma");
   cancelAutosaveQueue("contacts");
   cancelAutosaveQueue("program");
+  cancelAutosaveQueue("attendance");
   state.session = null;
   state.users = [];
   state.accessEvents = [];
@@ -3584,6 +3675,7 @@ async function renderPendingAccessState() {
   cancelAutosaveQueue("turma");
   cancelAutosaveQueue("contacts");
   cancelAutosaveQueue("program");
+  cancelAutosaveQueue("attendance");
   state.users = [];
   state.accessEvents = [];
   state.pendingInvites = [];
@@ -4109,7 +4201,29 @@ function activateTab(tabName) {
         tab.dataset.tabTarget === tabName
         || tab.dataset.tabPanelTarget === tabName
       ));
-  if (!nextTab || nextTab.classList.contains("is-active")) {
+  if (!nextTab) {
+    if (tabName !== "turmas") {
+      return;
+    }
+
+    tabs.forEach((item) => item.classList.remove("is-active"));
+    panels.forEach((panel) => {
+      panel.classList.toggle("is-active", panel.dataset.tabPanel === "turmas");
+    });
+
+    state.isCreatingTurma = false;
+    state.isTurmaDetailsOpen = false;
+    updateAccessControlledTabs();
+    renderTurmaList();
+    renderTurmaForm();
+    renderTurmaActions();
+    renderTurmaShortcuts();
+    turmaSummary.hidden = true;
+    turmaSummary.textContent = "Clique em uma turma para visualizar ou editar os dados.";
+    return;
+  }
+
+  if (nextTab.classList.contains("is-active")) {
     return;
   }
   nextTab.click();
